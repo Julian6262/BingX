@@ -6,7 +6,7 @@ from websockets.asyncio.client import connect
 
 from gzip import GzipFile
 from io import BytesIO
-from json import dumps, loads
+from json import dumps
 
 import time
 import hmac
@@ -19,7 +19,7 @@ headers = {'X-BX-APIKEY': Config.API_KEY}
 
 
 # -----------------------------------------------------------------------------
-async def send_request(method, session, endpoint, params, quantity=None):
+async def send_request(method, session, endpoint, params):
     params_str = await parse_param(params)
     sign = hmac.new(Config.SECRET_KEY.encode("utf-8"), params_str.encode("utf-8"), digestmod=sha256).hexdigest()
     url = f"{Config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
@@ -34,7 +34,7 @@ async def send_request(method, session, endpoint, params, quantity=None):
                 print(f"Ошибка : {response.status} для {params['symbol']}")
                 return None
     except ClientConnectorDNSError:
-        print('Ошибка соединения с сетью')
+        print('Ошибка соединения с сетью request')
 
 
 async def parse_param(params):
@@ -47,43 +47,57 @@ async def parse_param(params):
 
 class WebSocketData:
     def __init__(self):
-        self.last_value = None
+        self.price = {}
         self._lock = Lock()
 
-    async def update_value(self, value):
+    async def update_price(self, symbol, price):
         async with self._lock:
-            self.last_value = value
+            self.price[symbol] = price
 
-    async def get_value(self):
+    async def get_price(self, symbol):
         async with self._lock:
-            return self.last_value
+            return self.price[symbol] if symbol in self.price else None
 
 
 ws_price = WebSocketData()
 
 
+# class TotalCost:
+#     def __init__(self):
+#         self.price = {}
+#         self._lock = Lock()
+#
+#     async def update_price(self, symbol, price):
+#         async with self._lock:
+#             self.price[symbol] = price
+#
+#     async def get_price(self, symbol):
+#         async with self._lock:
+#             return self.price[symbol] if symbol in self.price else None
+
+
 # -----------------------------------------------------------------------------
 
 
-async def place_order(symbol, quantity):
+async def place_order(symbol, quantity, side):
     method = "POST"
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
-        "symbol": symbol,
+        "symbol": f'{symbol}-USDT',
         "type": "MARKET",
-        "side": "BUY",
-        # "quantity": quantity,
+        "side": side,
         "quoteOrderQty": quantity
     }
 
     async with ClientSession(headers=headers) as session:
-        response = await send_request(method, session, endpoint, params, quantity)
-        if response:
-            print(f"{symbol}: {response}")
+        response = await send_request(method, session, endpoint, params)
+        # print(response['data']['price'])
+        # print(response['data']['executedQty'])
+        return response
 
 
 async def price_updates_ws(symbol):
-    channel = {"id": "1", "reqType": "sub", "dataType": f"{symbol}@lastPrice"}
+    channel = {"id": "1", "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
 
     async for websocket in connect(Config.URL_WS):
         try:
@@ -94,9 +108,7 @@ async def price_updates_ws(symbol):
                 utf8_data = loads(decompressed_data.decode('utf-8'))
                 if 'data' in utf8_data:
                     price = float(utf8_data["data"]["c"])
-                    await ws_price.update_value(price)
-
-                    print(price)
+                    await ws_price.update_price(symbol, price)
 
         except ConnectionClosed:
-            print('Ошибка соединения с сетью')
+            print('Ошибка соединения с сетью WS')
