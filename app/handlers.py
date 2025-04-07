@@ -9,6 +9,7 @@ router = Router()
 symbol = 'BTC'
 quantity = 2
 
+
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     # price = await ws_price.get_value()

@@ -10,3 +10,4 @@ class Config:
     SECRET_KEY = getenv('SECRET_KEY')
     API_KEY = getenv('API_KEY')
     TOKEN = getenv('TOKEN')
+    DB_URL=getenv('DB_URL')

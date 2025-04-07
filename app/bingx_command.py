@@ -34,7 +34,7 @@ async def send_request(method, session, endpoint, params):
                 print(f"Ошибка : {response.status} для {params['symbol']}")
                 return None
     except ClientConnectorDNSError:
-        print('Ошибка соединения с сетью request')
+        print('Ошибка соединения с сетью(request)')
 
 
 async def parse_param(params):
@@ -56,7 +56,7 @@ class WebSocketData:
 
     async def get_price(self, symbol):
         async with self._lock:
-            return self.price[symbol] if symbol in self.price else None
+            return self.price.get(symbol, False)
 
 
 ws_price = WebSocketData()
@@ -74,6 +74,7 @@ ws_price = WebSocketData()
 #     async def get_price(self, symbol):
 #         async with self._lock:
 #             return self.price[symbol] if symbol in self.price else None
+#             return self.price.get(symbol, False)
 
 
 # -----------------------------------------------------------------------------
@@ -111,4 +112,4 @@ async def price_updates_ws(symbol):
                     await ws_price.update_price(symbol, price)
 
         except ConnectionClosed:
-            print('Ошибка соединения с сетью WS')
+            print('Ошибка соединения с сетью(WS)')
