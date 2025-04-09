@@ -11,3 +11,6 @@ class Config:
     API_KEY = getenv('API_KEY')
     TOKEN = getenv('TOKEN')
     DB_URL=getenv('DB_URL')
+    ADMIN = getenv('ADMIN')
+
+    SYMBOLS = ('BTC', 'BNB', 'SOL')

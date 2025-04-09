@@ -1,19 +1,19 @@
 from asyncio import gather, run
 from aiogram import Bot, Dispatcher
 
-from app.bingx_command import price_updates_ws
-from app.config import Config
-from app.database.engine import drop_db, create_db
-from app.handlers import router
-
-symbols = ('BTC', 'BNB', 'SOL')
+from bingx_command import price_updates_ws
+from common.config import Config
+from database.engine import drop_db, create_db, session_maker
+from handlers import router
+from middlewares.db import DataBaseSession
 
 
 async def on_startup():
-    run_param = False
-    if run_param:
-        await drop_db()
-    await create_db()
+    # run_param = False
+    run_param = True
+    await (create_db() if run_param else drop_db())
+    # await bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats()),
+    # await bot.set_my_commands(commands=private, scope=BotCommandScopeAllPrivateChats()),
 
 
 async def on_shutdown():
@@ -26,15 +26,12 @@ dp.include_router(router)
 
 dp.startup.register(on_startup)
 dp.shutdown.register(on_shutdown)
-
-
-# dp.update.middleware(DataBaseSession(session_pool=session_maker))
-# bot.my_admins_list = {int(i) for i in os.getenv('ADMIN').split(' ')}
+dp.update.middleware(DataBaseSession(session_pool=session_maker))  # Проброс сессии sqlalchemy в хэндлеры
 
 
 async def main():
     tasks = [
-        *[price_updates_ws(symbol) for symbol in symbols],
+        *[price_updates_ws(symbol) for symbol in Config.SYMBOLS],
 
         bot.delete_webhook(drop_pending_updates=True),
         dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),

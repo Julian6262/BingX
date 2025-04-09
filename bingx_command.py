@@ -13,9 +13,9 @@ import hmac
 from hashlib import sha256
 from json import loads
 
-from app.config import Config
+from common.config import Config
 
-headers = {'X-BX-APIKEY': Config.API_KEY}
+HEADERS = {'X-BX-APIKEY': Config.API_KEY}
 
 
 # -----------------------------------------------------------------------------
@@ -28,13 +28,14 @@ async def send_request(method, session, endpoint, params):
         async with (session.get(url) if method == "GET" else session.post(url)) as response:
             if response.status == 200:
                 data = await response.text()
-                json_data = loads(data)
-                return json_data
+                return loads(data)
             else:
                 print(f"Ошибка : {response.status} для {params['symbol']}")
-                return None
+                return False
+
     except ClientConnectorDNSError:
         print('Ошибка соединения с сетью(request)')
+        return False
 
 
 async def parse_param(params):
@@ -45,7 +46,7 @@ async def parse_param(params):
         return params_str + "timestamp=" + str(int(time.time() * 1000))
 
 
-class WebSocketData:
+class WebSocketData:  # Класс для работы с текущими ценами из websockets
     def __init__(self):
         self.price = {}
         self._lock = Lock()
@@ -56,7 +57,7 @@ class WebSocketData:
 
     async def get_price(self, symbol):
         async with self._lock:
-            return self.price.get(symbol, False)
+            return self.price.get(symbol.upper(), False)
 
 
 ws_price = WebSocketData()
@@ -73,28 +74,25 @@ ws_price = WebSocketData()
 #
 #     async def get_price(self, symbol):
 #         async with self._lock:
-#             return self.price[symbol] if symbol in self.price else None
 #             return self.price.get(symbol, False)
 
 
 # -----------------------------------------------------------------------------
 
 
-async def place_order(symbol, quantity, side):
+async def place_order(symbol, side, quantity=0, executed_qty=0):
     method = "POST"
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
-        "symbol": f'{symbol}-USDT',
+        "symbol": f'{symbol.upper()}-USDT',
         "type": "MARKET",
         "side": side,
-        "quoteOrderQty": quantity
+        "quantity": executed_qty,
+        "quoteOrderQty": quantity,
     }
 
-    async with ClientSession(headers=headers) as session:
-        response = await send_request(method, session, endpoint, params)
-        # print(response['data']['price'])
-        # print(response['data']['executedQty'])
-        return response
+    async with ClientSession(headers=HEADERS) as session:
+        return await send_request(method, session, endpoint, params)
 
 
 async def price_updates_ws(symbol):
