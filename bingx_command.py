@@ -1,17 +1,16 @@
+import gzip
+import logging
 from asyncio import Lock
+from collections import defaultdict, deque
 
-from aiohttp import ClientSession, ClientConnectorDNSError
-from websockets import ConnectionClosed
-from websockets.asyncio.client import connect
-
-from gzip import GzipFile
-from io import BytesIO
-from json import dumps
+from aiohttp import ClientSession, ClientConnectorError
 
 import time
 import hmac
 from hashlib import sha256
-from json import loads
+from json import loads, JSONDecodeError
+
+from websockets import ConnectionClosed
 
 from common.config import Config
 
@@ -19,34 +18,26 @@ HEADERS = {'X-BX-APIKEY': Config.API_KEY}
 
 
 # -----------------------------------------------------------------------------
-async def send_request(method, session, endpoint, params):
-    params_str = await parse_param(params)
-    sign = hmac.new(Config.SECRET_KEY.encode("utf-8"), params_str.encode("utf-8"), digestmod=sha256).hexdigest()
+async def send_request(method: str, session: ClientSession, endpoint: str, params: dict):
+    params['timestamp'] = int(time.time() * 1000)
+    params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
+    sign = hmac.new(Config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
     url = f"{Config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
 
     try:
-        async with (session.get(url) if method == "GET" else session.post(url)) as response:
+        async with session.request(method, url) as response:
             if response.status == 200:
-                data = await response.text()
-                return loads(data)
+                return loads(await response.text())
             else:
-                print(f"Ошибка : {response.status} для {params['symbol']}")
-                return False
+                logging.error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
+                return None
 
-    except ClientConnectorDNSError:
-        print('Ошибка соединения с сетью(request)')
-        return False
-
-
-async def parse_param(params):
-    params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
-    if params_str != "":
-        return params_str + "&timestamp=" + str(int(time.time() * 1000))
-    else:
-        return params_str + "timestamp=" + str(int(time.time() * 1000))
+    except ClientConnectorError as e:
+        logging.error(f'Ошибка соединения с сетью (request): {e}')
+        return None
 
 
-class WebSocketData:  # Класс для работы с текущими ценами из websockets
+class WebSocketData:  # Класс для работы с ценами в реальном времени из websockets
     def __init__(self):
         self.price = {}
         self._lock = Lock()
@@ -57,34 +48,50 @@ class WebSocketData:  # Класс для работы с текущими це�
 
     async def get_price(self, symbol):
         async with self._lock:
-            return self.price.get(symbol.upper(), False)
+            return self.price.get(symbol)
+
+
+class OrderBook: # Класс для работы с ордерами в реальном времени
+    def __init__(self):
+        self.orders = defaultdict(deque)  # Словарь для хранения ордеров по символам
+        self._lock = Lock()
+
+    async def update_orders(self, symbol, price, executed_qty):
+        async with self._lock:
+            self.orders[symbol].append({"price": price, "executed_qty": executed_qty})
+
+    async def get_orders(self, symbol):
+        async with self._lock:
+            return self.orders.get(symbol, [])  # Возвращаем пустой список, если symbol нет
+
+    async def get_last_order(self, symbol):
+        async with self._lock:
+            orders = self.orders.get(symbol)
+            return orders[-1] if orders else None
+
+    async def delete_last_order(self, symbol):
+        async with self._lock:
+            orders = self.orders.get(symbol)
+            if orders:
+                orders.pop()
+
+    async def get_total_cost(self, symbol):  # Метод для подсчета общей стоимости
+        async with self._lock:
+            orders = self.orders.get(symbol, ())
+            return sum(order['price'] * order['executed_qty'] for order in orders)
 
 
 ws_price = WebSocketData()
-
-
-# class TotalCost:
-#     def __init__(self):
-#         self.price = {}
-#         self._lock = Lock()
-#
-#     async def update_price(self, symbol, price):
-#         async with self._lock:
-#             self.price[symbol] = price
-#
-#     async def get_price(self, symbol):
-#         async with self._lock:
-#             return self.price.get(symbol, False)
+orders_book = OrderBook()
 
 
 # -----------------------------------------------------------------------------
 
 
 async def place_order(symbol, side, quantity=0, executed_qty=0):
-    method = "POST"
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
-        "symbol": f'{symbol.upper()}-USDT',
+        "symbol": f'{symbol}-USDT',
         "type": "MARKET",
         "side": side,
         "quantity": executed_qty,
@@ -92,22 +99,25 @@ async def place_order(symbol, side, quantity=0, executed_qty=0):
     }
 
     async with ClientSession(headers=HEADERS) as session:
-        return await send_request(method, session, endpoint, params)
+        return await send_request("POST", session, endpoint, params)
 
 
-async def price_updates_ws(symbol):
+async def price_updates_ws(session: ClientSession, symbol: str):
     channel = {"id": "1", "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
 
-    async for websocket in connect(Config.URL_WS):
-        try:
-            await websocket.send(dumps(channel))
-            async for message in websocket:
-                compressed_data = GzipFile(fileobj=BytesIO(message), mode='rb')
-                decompressed_data = compressed_data.read()
-                utf8_data = loads(decompressed_data.decode('utf-8'))
-                if 'data' in utf8_data:
-                    price = float(utf8_data["data"]["c"])
-                    await ws_price.update_price(symbol, price)
+    try:
+        async with session.ws_connect(Config.URL_WS) as ws:
+            await ws.send_json(channel)
 
-        except ConnectionClosed:
-            print('Ошибка соединения с сетью(WS)')
+            async for message in ws:
+                try:
+                    data = loads(gzip.decompress(message.data).decode())
+                    if 'data' in data:
+                        price = float(data["data"]["c"])
+                        await ws_price.update_price(symbol, price)
+
+                except (gzip.BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
+                    logging.error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
+
+    except ConnectionClosed as e:
+        logging.error(f"Ошибка соединения WebSocket: {e}")

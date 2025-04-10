@@ -4,7 +4,7 @@ from aiogram.types import TelegramObject
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 
-class DataBaseSession(BaseMiddleware):
+class DataBaseSession(BaseMiddleware):  # Используем одну сессию, переданную из main
     def __init__(self, session_pool: async_sessionmaker):
         self.session_pool = session_pool
 
@@ -14,6 +14,6 @@ class DataBaseSession(BaseMiddleware):
             event: TelegramObject,
             data: Dict[str, Any],
     ) -> Any:
-        async with self.session_pool() as session:
+        async with self.session_pool() as session:  # Создаем новую сессию для каждого запроса
             data['session'] = session
             return await handler(event, data)
