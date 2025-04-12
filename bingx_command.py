@@ -42,40 +42,47 @@ class WebSocketData:  # Класс для работы с ценами в реа
         self.price = {}
         self._lock = Lock()
 
-    async def update_price(self, symbol, price):
+    async def update_price(self, symbol: str, price: float):
         async with self._lock:
             self.price[symbol] = price
 
-    async def get_price(self, symbol):
+    async def get_price(self, symbol: str):
         async with self._lock:
             return self.price.get(symbol)
 
 
-class OrderBook: # Класс для работы с ордерами в реальном времени
+class OrderBook:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
         self.orders = defaultdict(deque)  # Словарь для хранения ордеров по символам
         self._lock = Lock()
 
-    async def update_orders(self, symbol, price, executed_qty):
+    async def update_orders(self, symbol, data: dict):
         async with self._lock:
-            self.orders[symbol].append({"price": price, "executed_qty": executed_qty})
+            self.orders[symbol].append(
+                {"executed_qty": data['executed_qty'], 'executed_qty_real': data['executed_qty_real'],
+                 "cost": data['cost'], "commission": data['commission'],
+                 "cost_with_commission": data['cost_with_commission'], "open_time": data['open_time']})
 
-    async def get_orders(self, symbol):
+    async def get_orders(self, symbol: str):
         async with self._lock:
             return self.orders.get(symbol, [])  # Возвращаем пустой список, если symbol нет
 
-    async def get_last_order(self, symbol):
+    async def get_last_order(self, symbol: str):
         async with self._lock:
             orders = self.orders.get(symbol)
             return orders[-1] if orders else None
 
-    async def delete_last_order(self, symbol):
+    async def delete_last_order(self, symbol: str):
         async with self._lock:
             orders = self.orders.get(symbol)
             if orders:
                 orders.pop()
 
-    async def get_total_cost(self, symbol):  # Метод для подсчета общей стоимости
+    # async def delete_all_orders(self, symbol: str):  # Метод для удаления всех ордеров при усреднении
+    #     async with self._lock:
+    #         orders = self.orders.get(symbol)
+
+    async def get_total_cost(self, symbol: str):  # Метод для подсчета общей стоимости
         async with self._lock:
             orders = self.orders.get(symbol, ())
             return sum(order['price'] * order['executed_qty'] for order in orders)
@@ -88,7 +95,7 @@ orders_book = OrderBook()
 # -----------------------------------------------------------------------------
 
 
-async def place_order(symbol, side, quantity=0, executed_qty=0):
+async def place_order(symbol: str, side: str, quantity: int = 0, executed_qty: float = 0):
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
         "symbol": f'{symbol}-USDT',

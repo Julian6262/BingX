@@ -1,4 +1,4 @@
-from sqlalchemy import DateTime, func, String, ForeignKey, BigInteger, Numeric
+from sqlalchemy import DateTime, String, ForeignKey, Numeric, Float
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -22,11 +22,12 @@ class Symbol(Base):
 class OrderInfo(Base):
     __tablename__ = 'order_info'
 
-    order_id: Mapped[int] = mapped_column(BigInteger)
-    price: Mapped[float] = mapped_column(Numeric(10, 2))
-    executed_qty: Mapped[float] = mapped_column(Numeric(10, 8))
+    executed_qty: Mapped[float] = mapped_column(Float)
+    executed_qty_real: Mapped[float] = mapped_column(Float)
+    cost: Mapped[float] = mapped_column(Float)
+    commission: Mapped[float] = mapped_column(Float)
+    cost_with_commission: Mapped[float] = mapped_column(Float)
     symbol_id: Mapped[int] = mapped_column(ForeignKey('symbol.id'), index=True)
-    created_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[DateTime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    open_time: Mapped[DateTime] = mapped_column(DateTime)
 
     symbol: Mapped["Symbol"] = relationship(back_populates="orders")
