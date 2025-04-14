@@ -1,7 +1,7 @@
 from asyncio import gather
 
 from sqlalchemy import select, delete, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from bingx_command import orders_book

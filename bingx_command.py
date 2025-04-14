@@ -1,9 +1,9 @@
 import gzip
 import logging
-from asyncio import Lock
+from asyncio import Lock, sleep
 from collections import defaultdict, deque
 
-from aiohttp import ClientSession, ClientConnectorError
+from aiohttp import ClientSession, ClientConnectorError, WSServerHandshakeError
 
 import time
 import hmac
@@ -12,21 +12,22 @@ from json import loads, JSONDecodeError
 
 from websockets import ConnectionClosed
 
-from common.config import Config
-
-HEADERS = {'X-BX-APIKEY': Config.API_KEY}
+from common.config import config
 
 
 # -----------------------------------------------------------------------------
 async def send_request(method: str, session: ClientSession, endpoint: str, params: dict):
     params['timestamp'] = int(time.time() * 1000)
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
-    sign = hmac.new(Config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
-    url = f"{Config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
+    sign = hmac.new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
+    url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
 
     try:
         async with session.request(method, url) as response:
             if response.status == 200:
+                if method == 'PUT':
+                    print(f"Ответ на PUT запрос: {response}")
+                    return None  # PUT запросы не возвращают данных
                 return loads(await response.text())
             else:
                 logging.error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
@@ -35,6 +36,23 @@ async def send_request(method: str, session: ClientSession, endpoint: str, param
     except ClientConnectorError as e:
         logging.error(f'Ошибка соединения с сетью (request): {e}')
         return None
+    except JSONDecodeError as e:  # обработка ошибки декодирования json
+        logging.error(f"Ошибка декодирования JSON: {e}")
+        return None
+
+
+class AccountInfo:  # Класс для работы с данными счета
+    def __init__(self):
+        self.listen_key = None
+        self._lock = Lock()
+
+    async def update_listen_key(self, listen_key: str):
+        async with self._lock:
+            self.listen_key = listen_key
+
+    async def get_listen_key(self):
+        async with self._lock:
+            return self.listen_key
 
 
 class WebSocketData:  # Класс для работы с ценами в реальном времени из websockets
@@ -82,20 +100,21 @@ class OrderBook:  # Класс для работы с ордерами в реа
     #     async with self._lock:
     #         orders = self.orders.get(symbol)
 
-    async def get_total_cost(self, symbol: str):  # Метод для подсчета общей стоимости
-        async with self._lock:
-            orders = self.orders.get(symbol, ())
-            return sum(order['price'] * order['executed_qty'] for order in orders)
+    # async def get_total_cost(self, symbol: str):  # Метод для подсчета общей стоимости
+    #     async with self._lock:
+    #         orders = self.orders.get(symbol, ())
+    #         return sum(order['price'] * order['executed_qty'] for order in orders)
 
 
 ws_price = WebSocketData()
 orders_book = OrderBook()
+account_info = AccountInfo()
 
 
 # -----------------------------------------------------------------------------
 
 
-async def place_order(symbol: str, side: str, quantity: int = 0, executed_qty: float = 0):
+async def place_order(symbol: str, session: ClientSession, side: str, quantity: int = 0, executed_qty: float = 0):
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
         "symbol": f'{symbol}-USDT',
@@ -105,15 +124,28 @@ async def place_order(symbol: str, side: str, quantity: int = 0, executed_qty: f
         "quoteOrderQty": quantity,
     }
 
-    async with ClientSession(headers=HEADERS) as session:
-        return await send_request("POST", session, endpoint, params)
+    return await send_request("POST", session, endpoint, params)
 
 
-async def price_updates_ws(session: ClientSession, symbol: str):
+# async def manage_listen_key(session: ClientSession):
+#     endpoint = '/openApi/user/auth/userDataStream'
+#     listen_key = await send_request("POST", session, endpoint, {})
+#
+#     if listen_key:
+#         await account_info.update_listen_key(listen_key['listenKey'])
+#
+#         while True:
+#             await sleep(900)
+#             await send_request("PUT", session, endpoint, {"listenKey": listen_key['listenKey']})
+#     else:
+#         print('Ошибка получения listen_key')
+
+
+async def price_updates_ws(symbol: str, session: ClientSession):
     channel = {"id": "1", "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
 
     try:
-        async with session.ws_connect(Config.URL_WS) as ws:
+        async with session.ws_connect(config.URL_WS) as ws:
             await ws.send_json(channel)
 
             async for message in ws:
@@ -126,5 +158,12 @@ async def price_updates_ws(session: ClientSession, symbol: str):
                 except (gzip.BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
                     logging.error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
 
-    except ConnectionClosed as e:
+    except (ConnectionClosed, WSServerHandshakeError) as e:
         logging.error(f"Ошибка соединения WebSocket: {e}")
+
+
+async def get_account_balances(session: ClientSession):
+    endpoint = '/openApi/spot/v1/account/balance'
+    params = {}
+
+    return await send_request("GET", session, endpoint, params)

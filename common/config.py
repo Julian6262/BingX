@@ -5,12 +5,16 @@ load_dotenv(find_dotenv())
 
 
 class Config:
-    BASE_URL = getenv('BASE_URL')
-    URL_WS = getenv('URL_WS')
-    SECRET_KEY = getenv('SECRET_KEY')
-    API_KEY = getenv('API_KEY')
-    TOKEN = getenv('TOKEN')
-    DB_URL=getenv('DB_URL')
-    ADMIN = getenv('ADMIN')
+    def __init__(self):
+        self.BASE_URL = getenv('BASE_URL')
+        self.URL_WS = getenv('URL_WS')
+        self.SECRET_KEY = getenv('SECRET_KEY')
+        self.API_KEY = getenv('API_KEY')
+        self.TOKEN = getenv('TOKEN')
+        self.DB_URL = getenv('DB_URL')
+        self.ADMIN = getenv('ADMIN')
+        self.SYMBOLS = ('BTC', 'BNB', 'SOL', 'ETH', 'XRP', 'ADA', 'LTC', 'LINK', 'TRX')
+        self.HEADERS = {'X-BX-APIKEY': self.API_KEY}
 
-    SYMBOLS = ('BTC', 'BNB', 'SOL')
+
+config = Config()
