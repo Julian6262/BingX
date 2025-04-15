@@ -1,7 +1,7 @@
 import gzip
 import logging
 from asyncio import Lock, sleep
-from collections import defaultdict, deque
+from collections import defaultdict
 
 from aiohttp import ClientSession, ClientConnectorError, WSServerHandshakeError
 
@@ -25,9 +25,6 @@ async def send_request(method: str, session: ClientSession, endpoint: str, param
     try:
         async with session.request(method, url) as response:
             if response.status == 200:
-                if method == 'PUT':
-                    print(f"Ответ на PUT запрос: {response}")
-                    return None  # PUT запросы не возвращают данных
                 return loads(await response.text())
             else:
                 logging.error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
@@ -41,18 +38,19 @@ async def send_request(method: str, session: ClientSession, endpoint: str, param
         return None
 
 
-class AccountInfo:  # Класс для работы с данными счета
+class AccountBalance:  # Класс для работы с данными счета
     def __init__(self):
-        self.listen_key = None
+        self.balance = {}
         self._lock = Lock()
 
-    async def update_listen_key(self, listen_key: str):
+    async def update_balance_batch(self, batch_data: list):
         async with self._lock:
-            self.listen_key = listen_key
+            for data in batch_data:
+                self.balance[data['asset']] = float(data['free'])
 
-    async def get_listen_key(self):
+    async def get_balance(self, symbol: str):
         async with self._lock:
-            return self.listen_key
+            return self.balance.get(symbol)
 
 
 class WebSocketData:  # Класс для работы с ценами в реальном времени из websockets
@@ -71,19 +69,30 @@ class WebSocketData:  # Класс для работы с ценами в реа
 
 class OrderBook:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
-        self.orders = defaultdict(deque)  # Словарь для хранения ордеров по символам
+        self.step_size = {}
+        self.orders = defaultdict(list)  # Словарь для хранения ордеров по символам
         self._lock = Lock()
 
-    async def update_orders(self, symbol, data: dict):
+    async def update_orders_batch(self, batch_data: list):
         async with self._lock:
-            self.orders[symbol].append(
-                {"executed_qty": data['executed_qty'], 'executed_qty_real': data['executed_qty_real'],
-                 "cost": data['cost'], "commission": data['commission'],
-                 "cost_with_commission": data['cost_with_commission'], "open_time": data['open_time']})
+            for symbol, step_size, data in batch_data:
+                self.step_size[symbol] = step_size
+                if data:
+                    self.orders[symbol].append(data)
+
+    async def update_order(self, symbol: str, step_size: float, data: dict = None):
+        async with self._lock:
+            self.step_size[symbol] = step_size
+            if data:
+                self.orders[symbol].append(data)
+
+    async def get_step_size(self, symbol: str):
+        async with self._lock:
+            return self.step_size.get(symbol)
 
     async def get_orders(self, symbol: str):
         async with self._lock:
-            return self.orders.get(symbol, [])  # Возвращаем пустой список, если symbol нет
+            return self.step_size.get(symbol), self.orders.get(symbol)  # Возвращаем копию списка
 
     async def get_last_order(self, symbol: str):
         async with self._lock:
@@ -108,44 +117,38 @@ class OrderBook:  # Класс для работы с ордерами в реа
 
 ws_price = WebSocketData()
 orders_book = OrderBook()
-account_info = AccountInfo()
+account_balance = AccountBalance()
 
 
 # -----------------------------------------------------------------------------
 
 
-async def place_order(symbol: str, session: ClientSession, side: str, quantity: int = 0, executed_qty: float = 0):
+async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float = 0):
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
         "symbol": f'{symbol}-USDT',
         "type": "MARKET",
         "side": side,
         "quantity": executed_qty,
-        "quoteOrderQty": quantity,
     }
 
     return await send_request("POST", session, endpoint, params)
 
 
-# async def manage_listen_key(session: ClientSession):
-#     endpoint = '/openApi/user/auth/userDataStream'
-#     listen_key = await send_request("POST", session, endpoint, {})
-#
-#     if listen_key:
-#         await account_info.update_listen_key(listen_key['listenKey'])
-#
-#         while True:
-#             await sleep(900)
-#             await send_request("PUT", session, endpoint, {"listenKey": listen_key['listenKey']})
-#     else:
-#         print('Ошибка получения listen_key')
+async def get_symbol_info(symbol: str, session: ClientSession):
+    endpoint = '/openApi/spot/v1/common/symbols'
+    params = {"symbol": f'{symbol}-USDT'}
+
+    return await send_request("GET", session, endpoint, params)
 
 
-async def price_updates_ws(symbol: str, session: ClientSession):
-    channel = {"id": "1", "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
+async def price_updates_ws(seconds: int, symbol: str, session: ClientSession):
+    channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
+    await sleep(seconds / 2)  # Задержка перед отправкой запроса
 
     try:
         async with session.ws_connect(config.URL_WS) as ws:
+            print(f'b_{symbol}')
             await ws.send_json(channel)
 
             async for message in ws:
@@ -159,11 +162,15 @@ async def price_updates_ws(symbol: str, session: ClientSession):
                     logging.error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
 
     except (ConnectionClosed, WSServerHandshakeError) as e:
-        logging.error(f"Ошибка соединения WebSocket: {e}")
+        logging.error(f"Ошибка соединения WebSocket: {symbol}, {e}")
 
 
-async def get_account_balances(session: ClientSession):
+async def load_account_balances(session: ClientSession):
     endpoint = '/openApi/spot/v1/account/balance'
     params = {}
 
-    return await send_request("GET", session, endpoint, params)
+    data = await send_request("GET", session, endpoint, params)
+    if 'data' in data:
+        await account_balance.update_balance_batch(data["data"]["balances"])
+    else:
+        logging.error(f"Ошибка загрузки баланса: {data}")

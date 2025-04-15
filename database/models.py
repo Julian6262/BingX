@@ -15,6 +15,7 @@ class Symbol(Base):
     __tablename__ = 'symbol'
 
     name: Mapped[str] = mapped_column(String(10), unique=True)
+    step_size: Mapped[float] = mapped_column(Float)
 
     orders: Mapped[List["OrderInfo"]] = relationship(back_populates="symbol")
 
@@ -22,8 +23,8 @@ class Symbol(Base):
 class OrderInfo(Base):
     __tablename__ = 'order_info'
 
+    price: Mapped[float] = mapped_column(Float)
     executed_qty: Mapped[float] = mapped_column(Float)
-    executed_qty_real: Mapped[float] = mapped_column(Float)
     cost: Mapped[float] = mapped_column(Float)
     commission: Mapped[float] = mapped_column(Float)
     cost_with_commission: Mapped[float] = mapped_column(Float)
