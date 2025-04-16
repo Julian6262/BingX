@@ -76,13 +76,13 @@ class OrderBook:  # Класс для работы с ордерами в реа
     async def update_orders_batch(self, batch_data: list):
         async with self._lock:
             for symbol, step_size, data in batch_data:
-                self.step_size[symbol] = step_size
+                if step_size:
+                    self.step_size[symbol] = step_size
                 if data:
                     self.orders[symbol].append(data)
 
-    async def update_order(self, symbol: str, step_size: float, data: dict = None):
+    async def update_order(self, symbol: str, data: dict):
         async with self._lock:
-            self.step_size[symbol] = step_size
             if data:
                 self.orders[symbol].append(data)
 
@@ -92,7 +92,7 @@ class OrderBook:  # Класс для работы с ордерами в реа
 
     async def get_orders(self, symbol: str):
         async with self._lock:
-            return self.step_size.get(symbol), self.orders.get(symbol)  # Возвращаем копию списка
+            return self.step_size.get(symbol), self.orders.get(symbol)
 
     async def get_last_order(self, symbol: str):
         async with self._lock:
@@ -123,7 +123,7 @@ account_balance = AccountBalance()
 # -----------------------------------------------------------------------------
 
 
-async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float = 0):
+async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float):
     endpoint = '/openApi/spot/v1/trade/order'
     params = {
         "symbol": f'{symbol}-USDT',
@@ -153,10 +153,8 @@ async def price_updates_ws(seconds: int, symbol: str, session: ClientSession):
 
             async for message in ws:
                 try:
-                    data = loads(gzip.decompress(message.data).decode())
-                    if 'data' in data:
-                        price = float(data["data"]["c"])
-                        await ws_price.update_price(symbol, price)
+                    if 'data' in (data := loads(gzip.decompress(message.data).decode())):
+                        await ws_price.update_price(symbol, float(data["data"]["c"]))
 
                 except (gzip.BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
                     logging.error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
@@ -169,8 +167,7 @@ async def load_account_balances(session: ClientSession):
     endpoint = '/openApi/spot/v1/account/balance'
     params = {}
 
-    data = await send_request("GET", session, endpoint, params)
-    if 'data' in data:
+    if 'data' in (data := await send_request("GET", session, endpoint, params)):
         await account_balance.update_balance_batch(data["data"]["balances"])
     else:
         logging.error(f"Ошибка загрузки баланса: {data}")

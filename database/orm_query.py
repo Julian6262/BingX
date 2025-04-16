@@ -10,8 +10,9 @@ from database.models import OrderInfo, Symbol
 
 
 # Добавить новый ордер в БД
-async def add_order(session: AsyncSession, symbol_name, data: dict):
-    session.add(OrderInfo(**data, symbol=symbol_name))
+async def add_order(session: AsyncSession, symbol_name: str, data: dict):
+    db_symbol = (await session.execute(select(Symbol).where(Symbol.name == symbol_name))).scalar_one()
+    session.add(OrderInfo(**data, symbol=db_symbol))
     await session.commit()
 
 
@@ -24,22 +25,20 @@ async def get_last_order(session: AsyncSession, symbol: str):
 
 # Последний ордер, удалить из БД
 async def del_last_order(session: AsyncSession, last_id: int):
-    await session.delete(delete(OrderInfo).where(OrderInfo.id == last_id))
+    await session.execute(delete(OrderInfo).where(OrderInfo.id == last_id))
     await session.commit()
 
 
 # Загружаем все ордера и symbols из БД в память
 async def load_from_db(session: AsyncSession):
+    symbols = (await session.execute(select(Symbol))).scalars().all()
+    symbol_batch = [(symbol.name, symbol.step_size, None) for symbol in symbols]
+
     query = select(OrderInfo).options(selectinload(OrderInfo.symbol))
     orders = (await session.execute(query)).scalars().all()
+    order_batch = [(order.symbol.name, None, order.__dict__) for order in orders]
 
-    if orders:
-        batch_data = [(order.symbol.name, order.symbol.step_size, order.__dict__) for order in orders]
-        await orders_book.update_orders_batch(batch_data)
-
-    elif symbols := (await session.execute(select(Symbol))).scalars().all():
-        batch_data = [(symbol.name, symbol.step_size, None) for symbol in symbols]
-        await orders_book.update_orders_batch(batch_data)
+    await orders_book.update_orders_batch(symbol_batch + order_batch)
 
 
 # Сохраняем символы из настроек в БД
@@ -56,10 +55,8 @@ async def save_simbols_to_db(symbols: list, session: AsyncSession, http_session:
         step_size = symbol_info['data']['symbols'][0]['stepSize']
 
         if symbol_name in existing_symbols:
-            # Символ существует, обновляем только step_size
-            existing_symbols[symbol_name].step_size = step_size
+            existing_symbols[symbol_name].step_size = step_size  # Символ существует, обновляем только step_size
         else:
-            # Символ не существует, добавляем
-            session.add(Symbol(name=symbol_name, step_size=step_size))
+            session.add(Symbol(name=symbol_name, step_size=step_size))  # Символ не существует, добавляем
 
     await session.commit()
