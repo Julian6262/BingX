@@ -1,46 +1,56 @@
-import gzip
-import logging
 from asyncio import Lock, sleep
-from collections import defaultdict
-
+from gzip import decompress, BadGzipFile
 from aiohttp import ClientSession, ClientConnectorError, WSServerHandshakeError
-
-import time
-import hmac
+from websockets import ConnectionClosed
+from logging import error
+from time import time
+from hmac import new as hmac_new
 from hashlib import sha256
 from json import loads, JSONDecodeError
-
-from websockets import ConnectionClosed
+from collections import defaultdict
 
 from common.config import config
 
 
 # -----------------------------------------------------------------------------
 async def send_request(method: str, session: ClientSession, endpoint: str, params: dict):
-    params['timestamp'] = int(time.time() * 1000)
+    params['timestamp'] = int(time() * 1000)
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
-    sign = hmac.new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
+    sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
     url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
+    print(url)
 
     try:
         async with session.request(method, url) as response:
             if response.status == 200:
-                return loads(await response.text())
+                if response.content_type == 'application/json':
+                    data = await response.json()
+                elif response.content_type == 'text/plain':
+                    data = loads(await response.text())
+                else:
+                    error(f"Неожиданный Content-Type: {response.content_type}")
+                    return None
+
+                print(data)
+                return data
+
             else:
-                logging.error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
+                error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
                 return None
 
     except ClientConnectorError as e:
-        logging.error(f'Ошибка соединения с сетью (request): {e}')
+        error(f'Ошибка соединения с сетью (request): {e}')
         return None
+
     except JSONDecodeError as e:  # обработка ошибки декодирования json
-        logging.error(f"Ошибка декодирования JSON: {e}")
+        error(f"Ошибка декодирования JSON: {e}")
         return None
 
 
 class AccountBalance:  # Класс для работы с данными счета
     def __init__(self):
         self.balance = {}
+        self.listen_key = None
         self._lock = Lock()
 
     async def update_balance_batch(self, batch_data: list):
@@ -50,7 +60,15 @@ class AccountBalance:  # Класс для работы с данными сче
 
     async def get_balance(self, symbol: str):
         async with self._lock:
-            return self.balance.get(symbol)
+            return self.balance.get(symbol, 0.0)
+
+    async def update_listen_key(self, listen_key: str):
+        async with self._lock:
+            self.listen_key = listen_key
+
+    async def get_listen_key(self):
+        async with self._lock:
+            return self.listen_key
 
 
 class WebSocketData:  # Класс для работы с ценами в реальном времени из websockets
@@ -105,6 +123,11 @@ class OrderBook:  # Класс для работы с ордерами в реа
             if orders:
                 orders.pop()
 
+    async def get_summary_executed_qty(self, symbol: str):  # Метод для подсчета стоимости исполненных ордеров
+        async with self._lock:
+            orders = self.orders.get(symbol)
+            return sum(order['executed_qty'] for order in orders) if orders else 0.0
+
     # async def delete_all_orders(self, symbol: str):  # Метод для удаления всех ордеров при усреднении
     #     async with self._lock:
     #         orders = self.orders.get(symbol)
@@ -142,6 +165,23 @@ async def get_symbol_info(symbol: str, session: ClientSession):
     return await send_request("GET", session, endpoint, params)
 
 
+async def manage_listen_key(session: ClientSession):
+    endpoint = '/openApi/user/auth/userDataStream'
+    params = {}
+    listen_key = await send_request("POST", session, endpoint, params)
+
+    if listen_key:
+        await account_balance.update_listen_key(listen_key['listenKey'])
+
+        while True:
+            print('listen_key', await account_balance.get_listen_key())
+            await sleep(1000)
+            await send_request("PUT", session, endpoint, {"listenKey": listen_key['listenKey']})
+
+    else:
+        print('Ошибка получения listen_key')
+
+
 async def price_updates_ws(seconds: int, symbol: str, session: ClientSession):
     channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
     await sleep(seconds / 2)  # Задержка перед отправкой запроса
@@ -153,21 +193,35 @@ async def price_updates_ws(seconds: int, symbol: str, session: ClientSession):
 
             async for message in ws:
                 try:
-                    if 'data' in (data := loads(gzip.decompress(message.data).decode())):
+                    if 'data' in (data := loads(decompress(message.data).decode())):
                         await ws_price.update_price(symbol, float(data["data"]["c"]))
 
-                except (gzip.BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
-                    logging.error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
+                except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
+                    error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
 
     except (ConnectionClosed, WSServerHandshakeError) as e:
-        logging.error(f"Ошибка соединения WebSocket: {symbol}, {e}")
+        error(f"Ошибка соединения WebSocket: {symbol}, {e}")
 
 
-async def load_account_balances(session: ClientSession):
-    endpoint = '/openApi/spot/v1/account/balance'
-    params = {}
+async def account_updates_ws(session: ClientSession):
+    while not (listen_key := await account_balance.get_listen_key()):
+        await sleep(1 / 2)  # Задержка перед попыткой получения ключа
 
-    if 'data' in (data := await send_request("GET", session, endpoint, params)):
-        await account_balance.update_balance_batch(data["data"]["balances"])
-    else:
-        logging.error(f"Ошибка загрузки баланса: {data}")
+    channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}
+    url = f"{config.URL_WS}?listenKey={listen_key}"
+
+    try:
+        async with session.ws_connect(url) as ws:
+            await ws.send_json(channel)
+
+            async for message in ws:
+                try:
+                    if 'e' in (data := loads(decompress(message.data).decode())):
+                        print(data['a']['B'])
+                    # await ws_price.update_price(symbol, float(data["data"]["c"]))
+
+                except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
+                    error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
+
+    except (ConnectionClosed, WSServerHandshakeError) as e:
+        error(f"Ошибка соединения WebSocket:, {e}")

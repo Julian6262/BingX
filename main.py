@@ -1,18 +1,18 @@
 from asyncio import gather, run
-
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommandScopeAllPrivateChats
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from bingx_command import price_updates_ws, load_account_balances
-from common.bot_cmd_list import private
+from bingx_command import price_updates_ws, manage_listen_key, account_updates_ws
 from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db, save_simbols_to_db
 from handlers import router
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
+
+from aiogram.types import BotCommandScopeAllPrivateChats
+from common.bot_cmd_list import private
 
 bot = Bot(token=config.TOKEN)
 dp = Dispatcher()
@@ -34,7 +34,8 @@ async def main():
             await load_from_db(session)
 
         tasks = (
-            load_account_balances(client_session),
+            manage_listen_key(client_session),
+            account_updates_ws(client_session),
             *(price_updates_ws(i, symbol, client_session) for i, symbol in enumerate(config.SYMBOLS)),
 
             # bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats()),

@@ -1,4 +1,5 @@
-import logging
+from datetime import datetime
+from logging import error
 
 from aiohttp import ClientSession
 from sqlalchemy import select, delete
@@ -16,16 +17,9 @@ async def add_order(session: AsyncSession, symbol_name: str, data: dict):
     await session.commit()
 
 
-# Последний ордер, возвращаем его значения
-async def get_last_order(session: AsyncSession, symbol: str):
-    query = select(OrderInfo).join(Symbol).where(Symbol.name == symbol).order_by(OrderInfo.id.desc()).limit(1)
-    last_order = await session.scalar(query)
-    return last_order.__dict__ if last_order else None
-
-
 # Последний ордер, удалить из БД
-async def del_last_order(session: AsyncSession, last_id: int):
-    await session.execute(delete(OrderInfo).where(OrderInfo.id == last_id))
+async def del_last_order(session: AsyncSession, open_time: datetime):
+    await session.execute(delete(OrderInfo).where(OrderInfo.open_time == open_time))
     await session.commit()
 
 
@@ -49,7 +43,7 @@ async def save_simbols_to_db(symbols: list, session: AsyncSession, http_session:
         symbol_info = await get_symbol_info(symbol_name, http_session)
 
         if symbol_info is None or not symbol_info.get('data', {}).get('symbols'):
-            logging.error(f"Ошибка получения информации о символе {symbol_name}: {symbol_info}")
+            error(f"Ошибка получения информации о символе {symbol_name}: {symbol_info}")
             continue  # Пропускаем этот символ, если произошла ошибка
 
         step_size = symbol_info['data']['symbols'][0]['stepSize']
