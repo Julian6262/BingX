@@ -1,6 +1,6 @@
 from asyncio import gather
 from datetime import datetime
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
+from decimal import Decimal, ROUND_DOWN
 
 from aiogram import Router, F
 from aiogram.filters import CommandStart
@@ -38,30 +38,31 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     if (price := await ws_price.get_price(symbol)) is None:  # Получить цену монеты
         return await message.answer('Цена не готова')
 
-    if (acc_money_usdt := await account_balance.get_balance('USDT')) < 1:
+    if (acc_money_usdt := await account_balance.get_balance('USDT')) <= 1:
         return await message.answer(f'Баланс слишком маленький: {acc_money_usdt}')
 
     acc_money = await account_balance.get_balance(symbol)
     step_size = await orders_book.get_step_size(symbol)
     execute_qty = QUANTITY / price
-    for_commission = execute_qty * 0.1  # Берем 10% от суммы с запасом на комиссию при покупке
-
-    # Округляем до ближайшего кратного step_size
-    for_commission = Decimal(for_commission).quantize(Decimal(step_size), rounding=ROUND_UP)
-    execute_qty = Decimal(execute_qty).quantize(Decimal(step_size), rounding=ROUND_DOWN)
+    for_commission = execute_qty * 0.1  # Берем 10% от суммы с запасом на комиссию при покупке для продажи
 
     sum_executed_qty = await orders_book.get_summary_executed_qty(symbol)
     execute_qty_c = float(
-        execute_qty if acc_money - sum_executed_qty > for_commission else execute_qty + max(for_commission, step_size)
-    )
+        execute_qty if acc_money - sum_executed_qty > for_commission else execute_qty + max(for_commission, step_size))
 
-    return await message.answer(
+    # Округляем до ближайшего кратного step_size
+    execute_qty = Decimal(execute_qty).quantize(Decimal(str(step_size)), rounding=ROUND_DOWN)
+    execute_qty_c = Decimal(execute_qty_c).quantize(Decimal(str(step_size)), rounding=ROUND_DOWN)
+
+    ans = 'НЕТ' if acc_money - sum_executed_qty > for_commission else 'ДА'
+    await message.answer(
         f'деньги: {acc_money}\n'
         f'summary_executed_qty: {sum_executed_qty}\n'
         f'acc_money - summary_executed_qty: {acc_money - sum_executed_qty}\n'
+        f'Берем комсу: {ans}\n'
         f'комиссия: {for_commission}\n'
         f'шаг {step_size}\n'
-        f'execute_qty: {float(execute_qty)}\n'
+        f'execute_qty: {execute_qty}\n'
         f'execute_qty_c: {execute_qty_c}\n'
     )
 
@@ -121,9 +122,11 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
 @router.message(CommandStart())
 async def start_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
     a = await account_balance.get_balance("USDT")
-    print(a)
+    print("USDT", a)
     a = await account_balance.get_balance("BTC")
-    print(a)
+    print("BTC", a)
+    a = await account_balance.get_balance("ADA")
+    print("ADA", a)
     btc_orders = await orders_book.get_orders("BTC")
     print(btc_orders)
     btc_orders = await orders_book.get_orders("ADA")

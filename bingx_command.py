@@ -18,7 +18,6 @@ async def send_request(method: str, session: ClientSession, endpoint: str, param
     params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
     sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
     url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
-    print(url)
 
     try:
         async with session.request(method, url) as response:
@@ -56,7 +55,7 @@ class AccountBalance:  # Класс для работы с данными сче
     async def update_balance_batch(self, batch_data: list):
         async with self._lock:
             for data in batch_data:
-                self.balance[data['asset']] = float(data['free'])
+                self.balance[data['a']] = float(data['wb'])
 
     async def get_balance(self, symbol: str):
         async with self._lock:
@@ -167,8 +166,7 @@ async def get_symbol_info(symbol: str, session: ClientSession):
 
 async def manage_listen_key(session: ClientSession):
     endpoint = '/openApi/user/auth/userDataStream'
-    params = {}
-    listen_key = await send_request("POST", session, endpoint, params)
+    listen_key = await send_request("POST", session, endpoint, {})
 
     if listen_key:
         await account_balance.update_listen_key(listen_key['listenKey'])
@@ -179,7 +177,7 @@ async def manage_listen_key(session: ClientSession):
             await send_request("PUT", session, endpoint, {"listenKey": listen_key['listenKey']})
 
     else:
-        print('Ошибка получения listen_key')
+        error('Ошибка получения listen_key')
 
 
 async def price_updates_ws(seconds: int, symbol: str, session: ClientSession):
@@ -218,7 +216,7 @@ async def account_updates_ws(session: ClientSession):
                 try:
                     if 'e' in (data := loads(decompress(message.data).decode())):
                         print(data['a']['B'])
-                    # await ws_price.update_price(symbol, float(data["data"]["c"]))
+                        await account_balance.update_balance_batch(data['a']['B'])
 
                 except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
                     error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
