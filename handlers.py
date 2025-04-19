@@ -67,7 +67,8 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     # --- Если сумма USDT меньше execute_qty_c, используем уменьшенную сумму executedQty из ответа на запрос
     executed_qty_order = float(order_data['executedQty'])
     orig_qty_order = float(order_data['origQty'])
-    # *executed_qty_order-step_size* для того, чтобы при продаже был резерв для комиссии
+
+    # -step_size* для того, чтобы при продаже был резерв для комиссии
     execute_qty = execute_qty if executed_qty_order == orig_qty_order else (executed_qty_order - step_size)
 
     data_for_db = {
@@ -124,7 +125,7 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
         return await message.answer('Продажа не прошла')
 
     await gather(
-        del_all_orders(session, symbol),  # Удалить все ордера по символу из базы
+        del_all_orders(session, symbol),
         orders_book.delete_all_orders(symbol),
     )
     await message.answer('Ордер закрыт')
