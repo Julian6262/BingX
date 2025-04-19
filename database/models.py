@@ -12,7 +12,7 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 
 class Symbol(Base):
-    __tablename__ = 'symbol'
+    __tablename__ = 'symbols'
 
     name: Mapped[str] = mapped_column(String(10), unique=True)
     step_size: Mapped[float] = mapped_column(Float)
@@ -21,14 +21,13 @@ class Symbol(Base):
 
 
 class OrderInfo(Base):
-    __tablename__ = 'order_info'
+    __tablename__ = 'orders_info'
 
     price: Mapped[float] = mapped_column(Float)
     executed_qty: Mapped[float] = mapped_column(Float)
     cost: Mapped[float] = mapped_column(Float)
-    commission: Mapped[float] = mapped_column(Float)
-    cost_with_commission: Mapped[float] = mapped_column(Float)
-    symbol_id: Mapped[int] = mapped_column(ForeignKey('symbol.id'), index=True)
+    cost_with_fee: Mapped[float] = mapped_column(Float)
+    symbol_id: Mapped[int] = mapped_column(ForeignKey('symbols.id'), index=True)
     open_time: Mapped[DateTime] = mapped_column(DateTime)
 
     symbol: Mapped["Symbol"] = relationship(back_populates="orders")

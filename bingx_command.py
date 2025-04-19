@@ -1,4 +1,5 @@
 from asyncio import Lock, sleep
+from decimal import Decimal
 from gzip import decompress, BadGzipFile
 from aiohttp import ClientSession, ClientConnectorError, WSServerHandshakeError
 from websockets import ConnectionClosed
@@ -7,7 +8,6 @@ from time import time
 from hmac import new as hmac_new
 from hashlib import sha256
 from json import loads, JSONDecodeError
-from collections import defaultdict
 
 from common.config import config
 
@@ -61,7 +61,7 @@ class AccountBalance:  # Класс для работы с данными сче
         async with self._lock:
             return self.balance.get(symbol, 0.0)
 
-    async def update_listen_key(self, listen_key: str):
+    async def add_listen_key(self, listen_key: str):
         async with self._lock:
             self.listen_key = listen_key
 
@@ -86,22 +86,33 @@ class WebSocketData:  # Класс для работы с ценами в реа
 
 class OrderBook:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
+        self.symbols = []
         self.step_size = {}
-        self.orders = defaultdict(list)  # Словарь для хранения ордеров по символам
+        self.orders = {}  # Словарь для хранения ордеров по символам
         self._lock = Lock()
 
-    async def update_orders_batch(self, batch_data: list):
+    async def add_symbols_and_orders_batch(self, batch_data: list):
         async with self._lock:
             for symbol, step_size, data in batch_data:
-                if step_size:
-                    self.step_size[symbol] = step_size
-                if data:
-                    self.orders[symbol].append(data)
+                self.symbols.append(symbol)
+                self.step_size[symbol] = step_size
+                self.orders[symbol] = data
 
     async def update_order(self, symbol: str, data: dict):
         async with self._lock:
             if data:
                 self.orders[symbol].append(data)
+
+    async def add_symbol(self, symbol: str, step_size: float):
+        async with self._lock:
+            self.symbols.append(symbol)
+            self.step_size[symbol] = step_size
+
+    async def delete_symbol(self, symbol: str):
+        async with self._lock:
+            if symbol in self.symbols:
+                self.symbols.remove(symbol)
+                del self.step_size[symbol]
 
     async def get_step_size(self, symbol: str):
         async with self._lock:
@@ -109,7 +120,7 @@ class OrderBook:  # Класс для работы с ордерами в реа
 
     async def get_orders(self, symbol: str):
         async with self._lock:
-            return self.step_size.get(symbol), self.orders.get(symbol)
+            return self.orders.get(symbol)
 
     async def get_last_order(self, symbol: str):
         async with self._lock:
@@ -118,23 +129,23 @@ class OrderBook:  # Класс для работы с ордерами в реа
 
     async def delete_last_order(self, symbol: str):
         async with self._lock:
-            orders = self.orders.get(symbol)
-            if orders:
+            if orders := self.orders.get(symbol):
                 orders.pop()
 
-    async def get_summary_executed_qty(self, symbol: str):  # Метод для подсчета стоимости исполненных ордеров
+    async def get_summary_executed_qty(self, symbol: str):  # Метод для подсчета объема исполненных ордеров
         async with self._lock:
             orders = self.orders.get(symbol)
             return sum(order['executed_qty'] for order in orders) if orders else 0.0
 
-    # async def delete_all_orders(self, symbol: str):  # Метод для удаления всех ордеров при усреднении
-    #     async with self._lock:
-    #         orders = self.orders.get(symbol)
+    async def delete_all_orders(self, symbol: str):  # Метод для удаления всех ордеров при усреднении
+        async with self._lock:
+            if orders := self.orders.get(symbol):
+                orders.clear()
 
-    # async def get_total_cost(self, symbol: str):  # Метод для подсчета общей стоимости
-    #     async with self._lock:
-    #         orders = self.orders.get(symbol, ())
-    #         return sum(order['price'] * order['executed_qty'] for order in orders)
+    async def get_total_cost_with_fee(self, symbol: str):  # Метод для подсчета общей стоимости с комиссией
+        async with self._lock:
+            orders = self.orders.get(symbol)
+            return sum(order['cost_with_fee'] for order in orders) if orders else 0.0
 
 
 ws_price = WebSocketData()
@@ -144,15 +155,9 @@ account_balance = AccountBalance()
 
 # -----------------------------------------------------------------------------
 
-
-async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float):
+async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float | Decimal):
     endpoint = '/openApi/spot/v1/trade/order'
-    params = {
-        "symbol": f'{symbol}-USDT',
-        "type": "MARKET",
-        "side": side,
-        "quantity": executed_qty,
-    }
+    params = {"symbol": f'{symbol}-USDT', "type": "MARKET", "side": side, "quantity": executed_qty}
 
     return await send_request("POST", session, endpoint, params)
 
@@ -166,23 +171,43 @@ async def get_symbol_info(symbol: str, session: ClientSession):
 
 async def manage_listen_key(session: ClientSession):
     endpoint = '/openApi/user/auth/userDataStream'
-    listen_key = await send_request("POST", session, endpoint, {})
 
-    if listen_key:
-        await account_balance.update_listen_key(listen_key['listenKey'])
+    if listen_key := await send_request("POST", session, endpoint, {}):
+        await account_balance.add_listen_key(listen_key['listenKey'])
 
         while True:
-            print('listen_key', await account_balance.get_listen_key())
-            await sleep(1000)
+            await sleep(1200)
             await send_request("PUT", session, endpoint, {"listenKey": listen_key['listenKey']})
 
     else:
         error('Ошибка получения listen_key')
 
 
+async def track_be_level(symbol: str):
+    while not await ws_price.get_price(symbol):
+        await sleep(1 / 2)  # Задержка перед попыткой получения цены
+
+    while True:
+        actual_price = await ws_price.get_price(symbol)
+        total_cost_with_fee = await orders_book.get_total_cost_with_fee(symbol)
+        summary_executed = await orders_book.get_summary_executed_qty(symbol)
+        be_level_with_fee = total_cost_with_fee / summary_executed
+
+        print(
+            f'total_cost_with_fee: {total_cost_with_fee}\n'
+            f'summary_executed: {summary_executed}\n'
+            f"Текущая цена {symbol}: {actual_price}\n"
+            f'be_level_with_fee: {be_level_with_fee}\n'
+            f'actual_price * summary_executed: {actual_price * summary_executed}\n'
+            f'actual_price * summary_executed - total_cost_with_fee: {actual_price * summary_executed - total_cost_with_fee}\n'
+        )
+
+        await sleep(60)
+
+
 async def price_updates_ws(seconds: int, symbol: str, session: ClientSession):
     channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
-    await sleep(seconds / 2)  # Задержка перед отправкой запроса
+    await sleep(seconds / 2)  # Задержка перед запуском функции, иначе ошибка API
 
     try:
         async with session.ws_connect(config.URL_WS) as ws:
