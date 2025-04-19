@@ -15,13 +15,13 @@ async def add_order(session: AsyncSession, symbol_name: str, data: dict):
     await session.commit()
 
 
-# Последний ордер, удалить из БД
+# Удалить из БД последний ордер
 async def del_last_order(session: AsyncSession, open_time: datetime):
     await session.execute(delete(OrderInfo).where(OrderInfo.open_time == open_time))
     await session.commit()
 
 
-# Все ордера, удалить из БД
+# Удалить из БД все ордера
 async def del_all_orders(session: AsyncSession, symbol_name: str):
     await session.execute(delete(OrderInfo).where(OrderInfo.symbol.has(name=symbol_name)))
     await session.commit()
