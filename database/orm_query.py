@@ -4,7 +4,6 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from bingx_command import orders_book, get_symbol_info
 from database.models import OrderInfo, Symbol
 
 
@@ -28,19 +27,16 @@ async def del_all_orders(session: AsyncSession, symbol_name: str):
 
 
 # Загружаем все ордера и symbols из БД в память
-async def load_from_db(session: AsyncSession):
+async def load_from_db(session: AsyncSession, so_manager):
     query = select(Symbol).options(selectinload(Symbol.orders))
     symbols = (await session.execute(query)).scalars().all()
 
     data_batch = [(symbol.name, symbol.step_size, [order.__dict__ for order in symbol.orders]) for symbol in symbols]
-    await orders_book.add_symbols_and_orders_batch(data_batch)
+    await so_manager.add_symbols_and_orders_batch(data_batch)
 
 
-# Добавить символ из БД
-async def add_symbol(symbol: str, session: AsyncSession, http_session: ClientSession):
-    if (symbol_data := await get_symbol_info(symbol, http_session)) is None:
-        return None
-
+# Добавить символ в БД
+async def add_symbol(symbol: str, session: AsyncSession, symbol_data):
     step_size = symbol_data['data']['symbols'][0]['stepSize']
     session.add(Symbol(name=symbol, step_size=step_size))
     await session.commit()

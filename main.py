@@ -3,7 +3,7 @@ from aiogram import Bot, Dispatcher
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from bingx_command import price_updates_ws, manage_listen_key, account_updates_ws, track_be_level, orders_book
+from bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, track_be_level, so_manager, start_trading
 from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db
@@ -30,13 +30,14 @@ async def main():
 
         async with async_session_maker() as session:
             await init_db(engine)
-            await load_from_db(session)
+            await load_from_db(session, so_manager)
 
         tasks = (
             manage_listen_key(client_session),
-            account_updates_ws(client_session),
-            *(price_updates_ws(i, symbol, client_session) for i, symbol in enumerate(orders_book.symbols)),
-            track_be_level('TRX'),
+            account_upd_ws(client_session),
+            *(price_upd_ws(symbol, client_session, i) for i, symbol in enumerate(so_manager.symbols)),
+            *(track_be_level(symbol) for symbol in so_manager.symbols),
+            start_trading('TRX', session, client_session),
 
             # bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats()),
             # bot.set_my_commands(commands=private, scope=BotCommandScopeAllPrivateChats()),

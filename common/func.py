@@ -1,4 +1,8 @@
 from decimal import Decimal
+from asyncio import create_task
+from functools import wraps
+
+from aiohttp import ClientSession
 
 
 def get_decimal_places(step_size):
@@ -7,3 +11,17 @@ def get_decimal_places(step_size):
         return 0
     else:
         return abs(d.as_tuple().exponent)
+
+
+def add_task(outer_func, text: str):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(symbol: str, session: ClientSession = None, seconds: int = 0):
+            task = create_task(func(symbol, session, seconds))
+            await outer_func.add_task(symbol, task)
+            print(f'Запущено отслеживание {text} {symbol}')
+            return task
+
+        return wrapper
+
+    return decorator
