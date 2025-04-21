@@ -1,4 +1,5 @@
 from asyncio import Lock, sleep, CancelledError, gather
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from gzip import decompress, BadGzipFile
@@ -92,7 +93,7 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
         async with self._lock:
             self._task_price_upd[symbol] = task
 
-    async def del_task(self, symbol: str):
+    async def del_task(self, symbol: str):  # Изменить, сделать как в SymbolOrderManager !!!!!!!!!
         async with self._lock:
             if task := self._task_price_upd.pop(symbol, None):
                 task.cancel()
@@ -108,8 +109,8 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         self.symbols = []
         self._sell_order_flag = {}
         self._step_size = {}
-        self._orders = {}  # Словарь для хранения ордеров по символам
-        self._task_track_be = {}
+        self._orders = defaultdict(list)  # Словарь для хранения ордеров по символам
+        self._tasks = defaultdict(list)
         self._lock = Lock()
 
     async def add_symbols_and_orders_batch(self, batch_data: list):
@@ -129,8 +130,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
 
     async def update_order(self, symbol: str, data: dict):
         async with self._lock:
-            if data:
-                self._orders[symbol].append(data)
+            self._orders[symbol].append(data)
 
     async def add_symbol(self, symbol: str, step_size: float):
         async with self._lock:
@@ -178,17 +178,20 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
 
     async def add_task(self, symbol: str, task):
         async with self._lock:
-            self._task_track_be[symbol] = task
+            self._tasks[symbol].append(task)
 
-    async def del_task(self, symbol: str):
+    async def del_tasks(self, symbol: str):
         async with self._lock:
-            if task := self._task_track_be.pop(symbol, None):
-                task.cancel()
-                try:
-                    await task  # Дожидаемся завершения задачи
-                except CancelledError:
-                    pass  # Игнорируем CancelledError - это ожидаемое поведение
-                print(f"Отмена задачи по track_be для {symbol}")
+            tasks = self._tasks.pop(symbol, [])
+
+            for task in tasks:  # Итерируемся по списку задач
+                if task and not task.done():  # Проверяем, что задача существует и не завершена
+                    task.cancel()
+                    try:
+                        await task  # Дожидаемся завершения задачи
+                    except CancelledError:
+                        pass  # Игнорируем CancelledError - это ожидаемое поведение
+                    print(f"Отмена задачи по track_be для {symbol}")
 
 
 ws_price = WebSocketPrice()
@@ -212,76 +215,20 @@ async def get_symbol_info(symbol: str, session: ClientSession):
     return await send_request("GET", session, endpoint, params)
 
 
-async def manage_listen_key(session: ClientSession):
+async def manage_listen_key(http_session: ClientSession):
     endpoint = '/openApi/user/auth/userDataStream'
 
-    if (listen_key := await send_request("POST", session, endpoint, {})) is None:
+    if (listen_key := await send_request("POST", http_session, endpoint, {})) is None:
         error('Ошибка получения listen_key')
         return
 
     await account_manager.add_listen_key(listen_key['listenKey'])
     while True:
         await sleep(1200)
-        await send_request("PUT", session, endpoint, {"listenKey": listen_key['listenKey']})
+        await send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
 
 
-@add_task(so_manager, 'be_level')
-async def track_be_level(symbol: str, session: ClientSession, seconds: int):
-    while not await ws_price.get_price(symbol):
-        await sleep(0.5)  # Задержка перед попыткой получения цены
-
-    await so_manager.set_sell_order_flag(symbol, False)
-
-    while True:
-        if summary_executed := await so_manager.get_summary_executed_qty(symbol):
-            actual_price = await ws_price.get_price(symbol)
-            total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
-            be_level_with_fee = total_cost_with_fee / summary_executed
-            total_cost_with_2fee = total_cost_with_fee + total_cost_with_fee * 0.006
-            be_level_with_2fee = total_cost_with_2fee / summary_executed
-
-            print(
-                f"\n---symbol---{symbol}\n"
-                f'сумма с комис биржи (total_cost_with_fee): {total_cost_with_fee}\n'
-                f'сумма с комис биржи + 0,6% (total_cost_with_2fee): {total_cost_with_2fee}\n'
-                f'summary_executed: {summary_executed}\n'
-                f'безубыток с комис биржи (be_level_with_fee): {be_level_with_fee}\n'
-                f'безубыток с комис биржи + 0,6% (be_level_with_2fee): {be_level_with_2fee}\n'
-                f'actual_price * summary_executed: {actual_price * summary_executed}\n'
-                f'actual_price * summary_executed - total_cost_with_2fee: {actual_price * summary_executed - total_cost_with_2fee}\n'
-            )
-
-            if actual_price * summary_executed > total_cost_with_2fee:
-                await so_manager.set_sell_order_flag(symbol, True)
-
-        else:
-            print(f"Отсутствуют открытые ордера для {symbol}")
-
-        await sleep(5)
-
-
-@add_task(ws_price, 'price_upd')
-async def price_upd_ws(symbol: str, session: ClientSession, seconds: int):
-    channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
-    await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
-
-    try:
-        async with session.ws_connect(config.URL_WS) as ws:
-            await ws.send_json(channel)
-
-            async for message in ws:
-                try:
-                    if 'data' in (data := loads(decompress(message.data).decode())):
-                        await ws_price.update_price(symbol, float(data["data"]["c"]))
-
-                except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
-                    error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
-
-    except (ConnectionClosed, WSServerHandshakeError) as e:
-        error(f"Ошибка соединения WebSocket: {symbol}, {e}")
-
-
-async def account_upd_ws(session: ClientSession):
+async def account_upd_ws(http_session: ClientSession):
     while not (listen_key := await account_manager.get_listen_key()):
         await sleep(0.5)  # Задержка перед попыткой получения ключа
 
@@ -290,7 +237,7 @@ async def account_upd_ws(session: ClientSession):
     print(f'Запущено отслеживание баланса')
 
     try:
-        async with session.ws_connect(url) as ws:
+        async with http_session.ws_connect(url) as ws:
             await ws.send_json(channel)
 
             async for message in ws:
@@ -307,14 +254,14 @@ async def account_upd_ws(session: ClientSession):
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    if (acc_money_usdt := await account_manager.get_balance('USDT')) < 1.1:
+    if (acc_money_usdt := await account_manager.get_balance('USDT')) < config.ACCOUNT_BALANCE:
         return f'Баланс слишком маленький: {acc_money_usdt}'
 
     acc_money = await account_manager.get_balance(symbol)
     step_size = await so_manager.get_step_size(symbol)
     sum_executed_qty = await so_manager.get_summary_executed_qty(symbol)
     execute_qty = config.QUANTITY / price
-    for_fee = execute_qty * 0.1  # Берем 10% от суммы с запасом на комиссию при покупке для продажи
+    for_fee = execute_qty * config.FOR_FEE  # Берем 10% от суммы с запасом на комиссию при покупке
 
     execute_qty_c = execute_qty if acc_money - sum_executed_qty > for_fee else execute_qty + max(for_fee, step_size)
 
@@ -353,7 +300,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         'price': price,
         'executed_qty': execute_qty,
         'cost': (cost := price * execute_qty),  # Цена за одну монету
-        'cost_with_fee': cost + cost * config.TAKER_MAKER,  # 0.6% комиссия(на бирже 0.1% + 0.1%)
+        'cost_with_fee': cost + cost * config.TAKER_MAKER,  # 0.3% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
     }
 
@@ -366,11 +313,8 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
 
 async def place_sell_order(symbol: str, session: AsyncSession, http_session: ClientSession):
-    # Убрать условие, лишнее????????
-    if not (summary_executed := await so_manager.get_summary_executed_qty(symbol)):
-        return 'Нет открытых ордеров'
-
     # Ордер на продажу по суммарной стоимости покупки монеты, напр 0.00011 BTC
+    summary_executed = await so_manager.get_summary_executed_qty(symbol)
     response = await place_order(symbol, http_session, 'SELL', executed_qty=summary_executed)
 
     if not response.get("data"):
@@ -383,34 +327,104 @@ async def place_sell_order(symbol: str, session: AsyncSession, http_session: Cli
     return 'Все Ордера закрыты'
 
 
-async def start_trading(symbol: str, session: AsyncSession, http_session: ClientSession):
+@add_task(ws_price, 'price_upd')
+async def price_upd_ws(symbol, **kwargs):
+    http_session = kwargs['http_session']
+    seconds = kwargs['seconds']
+
+    channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
+    await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
+
+    try:
+        async with http_session.ws_connect(config.URL_WS) as ws:
+            await ws.send_json(channel)
+
+            async for message in ws:
+                try:
+                    if 'data' in (data := loads(decompress(message.data).decode())):
+                        await ws_price.update_price(symbol, float(data["data"]["c"]))
+
+                except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
+                    error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
+
+    except (ConnectionClosed, WSServerHandshakeError) as e:
+        error(f"Ошибка соединения WebSocket: {symbol}, {e}")
+
+
+@add_task(so_manager, 'be_level')
+async def track_be_level(symbol, **kwargs):
     while not await ws_price.get_price(symbol):
         await sleep(0.5)  # Задержка перед попыткой получения цены
 
-    print(f'Запуск торговли {symbol}')
+    await so_manager.set_sell_order_flag(symbol, False)
 
     while True:
-        price = await ws_price.get_price(symbol)
+        if summary_executed := await so_manager.get_summary_executed_qty(symbol):
+            actual_price = await ws_price.get_price(symbol)
+            total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
+            be_level_with_fee = total_cost_with_fee / summary_executed
+            total_cost_with_fee_tp = total_cost_with_fee + total_cost_with_fee * config.TARGET_PROFIT
+            be_level_with_fee_tp = total_cost_with_fee_tp / summary_executed
 
-        buy_order_flag = True  # Флаг, указывающий, нужно ли размещать ордер
+            print(
+                f"\n---symbol---{symbol}\n"
+                f'сумма с комис биржи (total_cost_with_fee): {total_cost_with_fee}\n'
+                f'сумма с комис биржи + 1% (total_cost_with_fee_tp): {total_cost_with_fee_tp}\n'
+                f'summary_executed: {summary_executed}\n'
+                f'безубыток с комис биржи (be_level_with_fee): {be_level_with_fee}\n'
+                f'безубыток с комис биржи + 1% (be_level_with_fee_tp): {be_level_with_fee_tp}\n'
+                f'actual_price * summary_executed: {actual_price * summary_executed}\n'
+                f'actual_price * summary_executed - total_cost_with_2fee: {actual_price * summary_executed - total_cost_with_fee_tp}\n'
+            )
 
-        # создаем ордер на покупку, если цена ниже 0,5% от цены последнего ордера
-        if last_order := await so_manager.get_last_order(symbol):
-            last_order_price = last_order['price']
-            next_price = last_order_price - last_order_price * 0.005
-            print(f"След цена: {next_price}, Текущая цена: {price}")
+            if actual_price * summary_executed > total_cost_with_fee_tp:
+                await so_manager.set_sell_order_flag(symbol, True)
 
-            if price > next_price:
-                buy_order_flag = False  # Не размещаем ордер, если цена выше next_price
-
-        if buy_order_flag:
-            response = await place_buy_order(symbol, price, session, http_session)
-            print(response)
-
-        # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
-        if await so_manager.get_sell_order_flag(symbol):
-            if response := await place_sell_order(symbol, session, http_session):
-                print(response)
-                await so_manager.set_sell_order_flag(symbol, False)  # Очищаем флаг
+        else:
+            print(f"Отсутствуют открытые ордера для {symbol}")
 
         await sleep(5)
+
+
+@add_task(so_manager, 'start_trading')
+async def start_trading(symbol, **kwargs):
+    session = kwargs.get('session')
+    http_session = kwargs.get('http_session')
+    async_session_maker = kwargs.get('async_session_maker')
+
+    async def trading_logic(symbol, session, http_session):
+        while not await ws_price.get_price(symbol):
+            await sleep(0.5)  # Задержка перед попыткой получения цены
+
+        print(f'Запуск торговли {symbol}')
+
+        while True:
+            price = await ws_price.get_price(symbol)
+            buy_order_flag = True  # Флаг, указывающий, нужно ли размещать ордер
+
+            # создаем ордер на покупку, если цена ниже 0,5% от цены последнего ордера
+            if last_order := await so_manager.get_last_order(symbol):
+                last_order_price = last_order['price']
+                next_price = last_order_price - last_order_price * config.GRID_STEP
+                print(f"След цена: {next_price}, Текущая цена: {price}")
+
+                if price > next_price:
+                    buy_order_flag = False  # Не размещаем ордер, если цена выше next_price
+
+            if buy_order_flag:
+                response = await place_buy_order(symbol, price, session, http_session)
+                print(response)
+
+            # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
+            if await so_manager.get_sell_order_flag(symbol):
+                if response := await place_sell_order(symbol, session, http_session):
+                    print(response)
+                    await so_manager.set_sell_order_flag(symbol, False)  # Очищаем флаг
+
+            await sleep(5)
+
+    if session is None:  # Сессия не передана, создаем новую
+        async with async_session_maker() as session:
+            await trading_logic(symbol, session, http_session)
+    else:  # Сессия передана, используем ее
+        await trading_logic(symbol, session, http_session)

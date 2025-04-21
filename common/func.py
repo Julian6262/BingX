@@ -16,8 +16,8 @@ def get_decimal_places(step_size):
 def add_task(outer_func, text: str):
     def decorator(func):
         @wraps(func)
-        async def wrapper(symbol: str, session: ClientSession = None, seconds: int = 0):
-            task = create_task(func(symbol, session, seconds))
+        async def wrapper(symbol, *args, **kwargs):
+            task = create_task(func(symbol, *args, **kwargs))
             await outer_func.add_task(symbol, task)
             print(f'Запущено отслеживание {text} {symbol}')
             return task

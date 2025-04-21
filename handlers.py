@@ -6,7 +6,7 @@ from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bingx_command import ws_price, place_order, so_manager, price_upd_ws, track_be_level, get_symbol_info, \
-    account_manager
+    account_manager, start_trading
 from common.config import config
 from database.orm_query import del_all_orders, del_symbol, add_symbol
 from filters.chat_types import IsAdmin
@@ -121,7 +121,6 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
     await gather(
         del_all_orders(session, symbol),
         so_manager.delete_all_orders(symbol),
-        so_manager.delete_all_orders(symbol),
     )
     await message.answer('Ордер закрыт')
 
@@ -140,8 +139,9 @@ async def add_symbol_cmd(message: Message, session: AsyncSession, http_session: 
     if step_size := await add_symbol(symbol, session, symbol_data):
         await gather(
             so_manager.add_symbol(symbol, step_size),
-            price_upd_ws(symbol, http_session),
-            track_be_level(symbol)
+            price_upd_ws(symbol, http_session=http_session),
+            track_be_level(symbol),
+            start_trading(symbol, session=session, http_session=http_session)
         )
         await message.answer('Символ добавлен')
 
@@ -158,7 +158,7 @@ async def del_symbol_cmd(message: Message, session: AsyncSession):
         del_symbol(symbol, session),
         so_manager.delete_symbol(symbol),
         ws_price.del_task(symbol),
-        so_manager.del_task(symbol)
+        so_manager.del_tasks(symbol)
     )
 
     await message.answer('Символ удален')
@@ -168,8 +168,8 @@ async def del_symbol_cmd(message: Message, session: AsyncSession):
 @router.message(CommandStart())
 async def start_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
     print(ws_price._task_price_upd)
-    print(so_manager._task_track_be)
-    print("флаг TRX", await so_manager.get_sell_order_flag('TRX'))
+    print(so_manager._tasks)
+    print(so_manager._orders)
     print('баланс USDT', await account_manager.get_balance('USDT'))
     print('баланс TRX', await account_manager.get_balance('TRX'))
     print('баланс ADA', await account_manager.get_balance('ADA'))

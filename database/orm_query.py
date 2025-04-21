@@ -1,5 +1,4 @@
 from datetime import datetime
-from aiohttp import ClientSession
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload

@@ -25,19 +25,21 @@ async def main():
 
     dp.update.middleware(DataBaseSession(session_pool=async_session_maker)),
 
-    async with ClientSession(headers=config.HEADERS) as client_session:
-        dp.update.middleware(HttpSession(session=client_session)),
+    async with ClientSession(headers=config.HEADERS) as http_session:
+        dp.update.middleware(HttpSession(session=http_session)),
 
         async with async_session_maker() as session:
             await init_db(engine)
             await load_from_db(session, so_manager)
 
         tasks = (
-            manage_listen_key(client_session),
-            account_upd_ws(client_session),
-            *(price_upd_ws(symbol, client_session, i) for i, symbol in enumerate(so_manager.symbols)),
+            manage_listen_key(http_session),
+            account_upd_ws(http_session),
             *(track_be_level(symbol) for symbol in so_manager.symbols),
-            start_trading('TRX', session, client_session),
+            *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in
+              enumerate(so_manager.symbols)),
+            *(start_trading(symbol, http_session=http_session, async_session_maker=async_session_maker) for symbol in
+              so_manager.symbols),
 
             # bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats()),
             # bot.set_my_commands(commands=private, scope=BotCommandScopeAllPrivateChats()),
