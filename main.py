@@ -20,14 +20,15 @@ from common.bot_cmd_list import private
 logger = getLogger('my_app')
 logger.setLevel(DEBUG)  # Устанавливаем минимальный уровень логирования
 
-debug_handler = FileHandler('logs/debug.log')
-info_handler = FileHandler('logs/info.log')
-error_handler = FileHandler('logs/error.log')
-formatter = Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+debug_handler = FileHandler('logs/debug.log', encoding="utf-8")
+info_handler = FileHandler('logs/info.log', encoding="utf-8")
+error_handler = FileHandler('logs/error.log', encoding="utf-8")
+formatter = Formatter('%(asctime)s - %(levelname)s - %(message)s')
 
 debug_handler.setLevel(DEBUG)
 info_handler.setLevel(INFO)
 error_handler.setLevel(ERROR)
+
 debug_handler.setFormatter(formatter)
 info_handler.setFormatter(formatter)
 error_handler.setFormatter(formatter)
