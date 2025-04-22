@@ -22,3 +22,7 @@ WebSocket connected price_upd_ws for XRP
 2025-04-22 14:09:46,920 - my_app - INFO - WebSocket connected price_upd_ws for ADA
 2025-04-22 14:09:46,991 - my_app - INFO - WebSocket connected account_upd_ws
 2025-04-22 14:09:47,945 - my_app - INFO - WebSocket connected price_upd_ws for XRP
+2025-04-22 14:15:27,842 - my_app - INFO - WebSocket connected price_upd_ws for TRX
+2025-04-22 14:15:28,381 - my_app - INFO - WebSocket connected account_upd_ws
+2025-04-22 14:15:28,831 - my_app - INFO - WebSocket connected price_upd_ws for ADA
+2025-04-22 14:15:30,123 - my_app - INFO - WebSocket connected price_upd_ws for XRP
