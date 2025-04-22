@@ -6,7 +6,7 @@ from gzip import decompress, BadGzipFile
 from aiohttp import ClientSession, ClientConnectorError, WSServerHandshakeError
 from sqlalchemy.ext.asyncio import AsyncSession
 from websockets import ConnectionClosed
-from logging import error
+from logging import getLogger
 from time import time
 from hmac import new as hmac_new
 from hashlib import sha256
@@ -15,6 +15,8 @@ from json import loads, JSONDecodeError
 from common.config import config
 from common.func import get_decimal_places, add_task
 from database.orm_query import add_order, del_all_orders
+
+logger = getLogger('my_app')
 
 
 # -----------------------------------------------------------------------------
@@ -32,22 +34,22 @@ async def send_request(method: str, session: ClientSession, endpoint: str, param
                 elif response.content_type == 'text/plain':
                     data = loads(await response.text())
                 else:
-                    error(f"Неожиданный Content-Type: {response.content_type}")
+                    logger.error(f"Неожиданный Content-Type send_request: {response.content_type}")
                     return None
 
                 print('Json: ', data)
                 return data
 
             else:
-                error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
+                logger.error(f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}")
                 return None
 
     except ClientConnectorError as e:
-        error(f'Ошибка соединения с сетью (request): {e}')
+        logger.error(f'Ошибка соединения с сетью (send_request): {e}')
         return None
 
     except JSONDecodeError as e:  # обработка ошибки декодирования json
-        error(f"Ошибка декодирования JSON: {e}")
+        logger.error(f"Ошибка декодирования send_request JSON: {e}")
         return None
 
 
@@ -219,38 +221,13 @@ async def manage_listen_key(http_session: ClientSession):
     endpoint = '/openApi/user/auth/userDataStream'
 
     if (listen_key := await send_request("POST", http_session, endpoint, {})) is None:
-        error('Ошибка получения listen_key')
+        logger.error('Ошибка получения listen_key')
         return
 
     await account_manager.add_listen_key(listen_key['listenKey'])
     while True:
         await sleep(1200)
         await send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
-
-
-async def account_upd_ws(http_session: ClientSession):
-    while not (listen_key := await account_manager.get_listen_key()):
-        await sleep(0.5)  # Задержка перед попыткой получения ключа
-
-    channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}
-    url = f"{config.URL_WS}?listenKey={listen_key}"
-    print(f'Запущено отслеживание баланса')
-
-    try:
-        async with http_session.ws_connect(url) as ws:
-            await ws.send_json(channel)
-
-            async for message in ws:
-                try:
-                    if 'e' in (data := loads(decompress(message.data).decode())):
-                        await account_manager.update_balance_batch(data['a']['B'])
-                        print(data['a']['B'])
-
-                except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
-                    error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
-
-    except (ConnectionClosed, WSServerHandshakeError) as e:
-        error(f"Ошибка соединения WebSocket:, {e}")
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
@@ -327,28 +304,61 @@ async def place_sell_order(symbol: str, session: AsyncSession, http_session: Cli
     return 'Все Ордера закрыты'
 
 
+async def account_upd_ws(http_session: ClientSession):
+    while not (listen_key := await account_manager.get_listen_key()):
+        await sleep(0.5)  # Задержка перед попыткой получения ключа
+
+    channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}
+    url = f"{config.URL_WS}?listenKey={listen_key}"
+
+    try:
+        async with http_session.ws_connect(url) as ws:
+            logger.info(f"WebSocket connected account_upd_ws")
+            await ws.send_json(channel)
+
+            async for message in ws:
+                try:
+                    if 'e' in (data := loads(decompress(message.data).decode())):
+                        await account_manager.update_balance_batch(data['a']['B'])
+                        print(data['a']['B'])
+
+                except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
+                    logger.error(f"Ошибка обработки сообщения WebSocket account_upd_ws: {e}, сообщение: {message.data}")
+
+    except (ConnectionClosed, WSServerHandshakeError) as e:
+        logger.error(f"Ошибка соединения WebSocket account_upd_ws:, {e}")
+
+    logger.error(f"account_upd_ws finished")
+
+
 @add_task(ws_price, 'price_upd')
 async def price_upd_ws(symbol, **kwargs):
-    http_session = kwargs['http_session']
-    seconds = kwargs['seconds']
+    seconds = kwargs.get('seconds', 0)
+    http_session = kwargs.get('http_session')
 
     channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
     await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
 
+    # while True:  # Цикл для повторного подключения
     try:
         async with http_session.ws_connect(config.URL_WS) as ws:
+            logger.info(f"WebSocket connected price_upd_ws for {symbol}")
             await ws.send_json(channel)
 
             async for message in ws:
+                logger.debug(f"Received message price_upd_ws for {symbol}: {message.data}")
                 try:
                     if 'data' in (data := loads(decompress(message.data).decode())):
                         await ws_price.update_price(symbol, float(data["data"]["c"]))
 
                 except (BadGzipFile, JSONDecodeError, KeyError, TypeError) as e:
-                    error(f"Ошибка обработки сообщения WebSocket: {e}, сообщение: {message.data}")
+                    logger.error(f"Ошибка обработки сообщения WebSocket price_upd_ws: {e}, сообщение: {message.data}")
 
     except (ConnectionClosed, WSServerHandshakeError) as e:
-        error(f"Ошибка соединения WebSocket: {symbol}, {e}")
+        logger.error(f"Ошибка соединения WebSocket price_upd_ws: {symbol}, {e}")
+        # await sleep(5)  # Пауза перед повторным подключением
+
+    logger.error(f"price_upd_ws finished for {symbol}")
 
 
 @add_task(so_manager, 'be_level')
@@ -368,13 +378,15 @@ async def track_be_level(symbol, **kwargs):
 
             print(
                 f"\n---symbol---{symbol}\n"
+                f'actual_price: {actual_price}\n'
                 f'сумма с комис биржи (total_cost_with_fee): {total_cost_with_fee}\n'
                 f'сумма с комис биржи + 1% (total_cost_with_fee_tp): {total_cost_with_fee_tp}\n'
+                f'доход: {actual_price * summary_executed - total_cost_with_fee}\n'
                 f'summary_executed: {summary_executed}\n'
                 f'безубыток с комис биржи (be_level_with_fee): {be_level_with_fee}\n'
                 f'безубыток с комис биржи + 1% (be_level_with_fee_tp): {be_level_with_fee_tp}\n'
                 f'actual_price * summary_executed: {actual_price * summary_executed}\n'
-                f'actual_price * summary_executed - total_cost_with_2fee: {actual_price * summary_executed - total_cost_with_fee_tp}\n'
+                f'actual_price * summary_executed - total_cost_with_fee_tp: {actual_price * summary_executed - total_cost_with_fee_tp}\n'
             )
 
             if actual_price * summary_executed > total_cost_with_fee_tp:

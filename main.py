@@ -1,4 +1,6 @@
 from asyncio import gather, run
+from logging import DEBUG, FileHandler, INFO, ERROR, getLogger, Formatter
+
 from aiogram import Bot, Dispatcher
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -13,6 +15,27 @@ from middlewares.http import HttpSession
 
 from aiogram.types import BotCommandScopeAllPrivateChats
 from common.bot_cmd_list import private
+
+# Создаем логгер
+logger = getLogger('my_app')
+logger.setLevel(DEBUG)  # Устанавливаем минимальный уровень логирования
+
+debug_handler = FileHandler('debug.log')
+info_handler = FileHandler('info.log')
+error_handler = FileHandler('error.log')
+formatter = Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+debug_handler.setLevel(DEBUG)
+info_handler.setLevel(INFO)
+error_handler.setLevel(ERROR)
+debug_handler.setFormatter(formatter)
+info_handler.setFormatter(formatter)
+error_handler.setFormatter(formatter)
+
+# Добавляем хендлеры к логгеру
+logger.addHandler(debug_handler)
+logger.addHandler(info_handler)
+logger.addHandler(error_handler)
 
 bot = Bot(token=config.TOKEN)
 dp = Dispatcher()
