@@ -2,7 +2,6 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 from aiohttp import ClientSession
-from sqlalchemy.ext.asyncio import async_sessionmaker
 
 
 class HttpSession(BaseMiddleware):  # Используем одну сессию, переданную из main
@@ -15,5 +14,5 @@ class HttpSession(BaseMiddleware):  # Используем одну сессию
             event: TelegramObject,
             data: Dict[str, Any],
     ) -> Any:
-        data['http_session'] = self.session # одна сессия для всего бота
+        data['http_session'] = self.session  # одна сессия для всего бота
         return await handler(event, data)

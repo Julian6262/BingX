@@ -1,4 +1,4 @@
-from sqlalchemy import DateTime, String, ForeignKey, Numeric, Float
+from sqlalchemy import DateTime, String, ForeignKey, Float
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 

@@ -2,19 +2,17 @@ from asyncio import gather, run
 from logging import DEBUG, FileHandler, INFO, ERROR, getLogger, Formatter
 
 from aiogram import Bot, Dispatcher
-from aiohttp import ClientSession
+from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, track_be_level, so_manager, start_trading
+from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, track_be_level, so_manager, \
+    start_trading
 from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db
 from handlers import router
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
-
-from aiogram.types import BotCommandScopeAllPrivateChats
-from common.bot_cmd_list import private
 
 # Создаем логгер
 logger = getLogger('my_app')
@@ -47,9 +45,12 @@ async def main():
     engine = create_async_engine(config.DB_URL, echo=True)
     async_session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
+    connector = TCPConnector(limit=200, keepalive_timeout=30)
+    timeout = ClientTimeout(total=60, connect=10, sock_read=30)
+
     dp.update.middleware(DataBaseSession(session_pool=async_session_maker)),
 
-    async with ClientSession(headers=config.HEADERS) as http_session:
+    async with ClientSession(headers=config.HEADERS, connector=connector, timeout=timeout) as http_session:
         dp.update.middleware(HttpSession(session=http_session)),
 
         async with async_session_maker() as session:

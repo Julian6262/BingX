@@ -5,8 +5,8 @@ from aiogram.types import Message
 from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bingx_command import ws_price, place_order, so_manager, price_upd_ws, track_be_level, get_symbol_info, \
-    account_manager, start_trading, place_buy_order
+from bingx_api.bingx_command import place_order, price_upd_ws, track_be_level, get_symbol_info, \
+    account_manager, start_trading, place_buy_order, so_manager, ws_price, task_manager
 from common.config import config
 from database.orm_query import del_all_orders, del_symbol, add_symbol
 from filters.chat_types import IsAdmin
@@ -25,6 +25,30 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
 
     response = await place_buy_order(symbol, price, session, http_session)
     await message.answer(response)
+
+
+# @router.message(F.text.startswith('s_'))  # Вводим например: s_btc, s_Bnb
+# async def sell_order_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
+#     if (symbol := message.text[2:].upper()) not in so_manager.symbols:
+#         return await message.answer('Не такой символ')
+#
+#     if (last_order_data := await so_manager.get_last_order(symbol)) is None:
+#         return await message.answer('Нет открытых ордеров')
+#
+#     executed_qty, open_time = last_order_data['executed_qty'], last_order_data['open_time']
+#
+#     # Ордер на продажу по цене покупки монеты, напр 0.000011 BTC
+#     response = await place_order(symbol, http_session, 'SELL', executed_qty=executed_qty)
+#     await message.answer(str(response))
+#
+#     if response.get("data") is None:
+#         return await message.answer('Продажа не прошла')
+#
+#     await gather(
+#         del_last_order(session, open_time),  # Удалить из базы
+#         so_manager.delete_last_order(symbol),  # Удалить из памяти
+#     )
+#     await message.answer('Ордер закрыт')
 
 
 @router.message(F.text.startswith('d_all_'))
@@ -56,10 +80,11 @@ async def add_symbol_cmd(message: Message, session: AsyncSession, http_session: 
     if symbol in so_manager.symbols:
         return await message.answer('Данный символ уже существует')
 
-    if (symbol_data := await get_symbol_info(symbol, http_session)) is None:
-        return await message.answer('Запрос о символе не получен')
+    data, text = await get_symbol_info(symbol, http_session)
+    if data is None:
+        return await message.answer(f'Запрос о символе не получен {text}')
 
-    if step_size := await add_symbol(symbol, session, symbol_data):
+    if step_size := await add_symbol(symbol, session, data):
         await gather(
             so_manager.add_symbol(symbol, step_size),
             price_upd_ws(symbol, http_session=http_session),
@@ -80,8 +105,7 @@ async def del_symbol_cmd(message: Message, session: AsyncSession):
     await gather(
         del_symbol(symbol, session),
         so_manager.delete_symbol(symbol),
-        ws_price.del_tasks(symbol),
-        so_manager.del_tasks(symbol)
+        task_manager.del_tasks(symbol)
     )
 
     await message.answer('Символ удален')

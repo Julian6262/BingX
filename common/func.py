@@ -2,8 +2,6 @@ from decimal import Decimal
 from asyncio import create_task
 from functools import wraps
 
-from aiohttp import ClientSession
-
 
 def get_decimal_places(step_size):
     d = Decimal(str(step_size))
