@@ -8,10 +8,10 @@ from logging import getLogger
 from json import loads
 
 from bingx_api.api_client import send_request
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager
 from common.config import config
 from common.func import get_decimal_places, add_task
-from database.orm_query import add_order, del_all_orders
+from database.orm_query import add_order, del_all_orders, del_last_order
 
 logger = getLogger('my_app')
 
@@ -19,6 +19,7 @@ ws_price = WebSocketPrice()
 so_manager = SymbolOrderManager()
 account_manager = AccountManager()
 task_manager = TaskManager()
+profit_manager = ProfitManager()
 
 
 async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float | Decimal):
@@ -51,7 +52,8 @@ async def manage_listen_key(http_session: ClientSession):
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
     if (acc_money_usdt := await account_manager.get_balance('USDT')) < config.ACCOUNT_BALANCE:
-        return f'Баланс слишком маленький: {acc_money_usdt}'
+        # return f'Баланс слишком маленький: {acc_money_usdt}'
+        return None
 
     acc_money = await account_manager.get_balance(symbol)
     step_size = await so_manager.get_step_size(symbol)
@@ -66,6 +68,16 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     execute_qty = round(execute_qty, decimal_places)
     execute_qty_c = round(execute_qty_c, decimal_places)
 
+    data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty_c)  # Ордер на покупку
+    if not (order_data := data.get("data")):
+        return f'\n\nОрдер НЕ открыт {symbol}: {text}\n'
+
+    # Если сумма USDT меньше execute_qty_c, используем уменьшенную сумму executedQty из ответа на запрос
+    # -step_size* для того, чтобы при продаже был резерв для комиссии
+    executed_qty_order = float(order_data['executedQty'])
+    orig_qty_order = float(order_data['origQty'])
+    execute_qty = execute_qty if executed_qty_order == orig_qty_order else (executed_qty_order - step_size)
+
     logger.info(
         f'\n\nденьги: {acc_money}\n'
         f'summary_executed_qty: {sum_executed_qty}\n'
@@ -74,28 +86,15 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         f'for_fee 10%: {for_fee}\n'
         f'decimal_places: {decimal_places}\n'
         f'шаг {step_size}\n'
-        f'execute_qty: {execute_qty}\n'
+        f'execute_qty (учитывает step_size): {execute_qty}\n'
         f'execute_qty_c: {execute_qty_c}\n'
     )
-
-    data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty_c)  # Ордер на покупку
-
-    if not (order_data := data.get("data")):
-        logger.info(order_data)
-        return f'\n\nОрдер НЕ открыт {symbol}: {text}\n'
-
-    # --- Если сумма USDT меньше execute_qty_c, используем уменьшенную сумму executedQty из ответа на запрос
-    executed_qty_order = float(order_data['executedQty'])
-    orig_qty_order = float(order_data['origQty'])
-
-    # -step_size* для того, чтобы при продаже был резерв для комиссии
-    execute_qty = execute_qty if executed_qty_order == orig_qty_order else (executed_qty_order - step_size)
 
     data_for_db = {
         'price': price,
         'executed_qty': execute_qty,
         'cost': (cost := price * execute_qty),  # Цена за одну монету
-        'cost_with_fee': cost + cost * config.TAKER_MAKER,  # 0.3% комиссия(на бирже 0.1% + 0.1%)
+        'cost_with_fee': cost + cost * config.TAKER_MAKER,  # 0.4% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
     }
 
@@ -104,23 +103,23 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         so_manager.update_order(symbol, data_for_db),  # Добавить ордер в память
     )
 
-    return f'\n\nОрдер открыт {symbol}\n'
+    return f'\n\nОрдер открыт {symbol}\n{text}\n'
 
 
-async def place_sell_order(symbol: str, session: AsyncSession, http_session: ClientSession):
+async def place_sell_order(symbol: str, summary_executed: float, session: AsyncSession, http_session: ClientSession,
+                           open_time: datetime | None = None):
     # Ордер на продажу по суммарной стоимости покупки монеты, напр 0.00011 BTC
-    summary_executed = await so_manager.get_summary_executed_qty(symbol)
     data, text = await place_order(symbol, http_session, 'SELL', executed_qty=summary_executed)
-
     if not data.get("data"):
         return f'\n\nПродажа не прошла: {text}\n'
 
-    await gather(
-        del_all_orders(session, symbol),  # Удалить все ордера из базы
-        so_manager.delete_all_orders(symbol),  # Удалить все ордера из памяти
-    )
-    return (f'\n\nВсе Ордера закрыты {symbol} сумма: {summary_executed}\n'
-            f'!!!! здесь разместить доход!!!!!')
+    if open_time:
+        tasks = [del_last_order(session, open_time), so_manager.delete_last_order(symbol)]
+    else:
+        tasks = [del_all_orders(session, symbol), so_manager.delete_all_orders(symbol)]
+
+    await gather(*tasks)
+    return f'\n\nОрдера закрыты {symbol} сумма: {summary_executed}\n{text}\n'
 
 
 async def account_upd_ws(http_session: ClientSession):
@@ -190,44 +189,6 @@ async def price_upd_ws(symbol, **kwargs):
         await sleep(5)  # Пауза перед повторным подключением
 
 
-@add_task(task_manager, 'be_level')
-async def track_be_level(symbol, **kwargs):
-    while not await ws_price.get_price(symbol):
-        await sleep(0.5)  # Задержка перед попыткой получения цены
-
-    await so_manager.set_sell_order_flag(symbol, False)
-
-    while True:
-        if summary_executed := await so_manager.get_summary_executed_qty(symbol):
-            actual_price = await ws_price.get_price(symbol)
-            total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
-            be_level_with_fee = total_cost_with_fee / summary_executed
-            total_cost_with_fee_tp = total_cost_with_fee + total_cost_with_fee * config.TARGET_PROFIT
-            be_level_with_fee_tp = total_cost_with_fee_tp / summary_executed
-
-            print(
-                f"\n---symbol---{symbol}\n"
-                f'actual_price: {actual_price}\n'
-                f'сумма с комиссией биржи (total_cost_with_fee): {total_cost_with_fee}\n'
-                f'сумма с комиссией биржи + 1% (total_cost_with_fee_tp): {total_cost_with_fee_tp}\n'
-                f'доход: {actual_price * summary_executed - total_cost_with_fee}\n'
-                f'summary_executed: {summary_executed}\n'
-                f'безубыток с комиссией биржи (be_level_with_fee): {be_level_with_fee}\n'
-                f'безубыток с комиссией биржи + 1% (be_level_with_fee_tp): {be_level_with_fee_tp}\n'
-                f'actual_price * summary_executed: {actual_price * summary_executed}\n'
-                f'actual_price * summary_executed - total_cost_with_fee_tp: {actual_price * summary_executed - total_cost_with_fee_tp}\n'
-            )
-
-            if actual_price * summary_executed > total_cost_with_fee_tp:
-                await so_manager.set_sell_order_flag(symbol, True)
-                await so_manager.delete_all_orders(symbol),  # Удалить все ордера из памяти
-
-        else:
-            print(f"Отсутствуют открытые ордера для {symbol}")
-
-        await sleep(5)
-
-
 @add_task(task_manager, 'start_trading')
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
@@ -238,35 +199,50 @@ async def start_trading(symbol, **kwargs):
         while not await ws_price.get_price(symbol):
             await sleep(0.5)  # Задержка перед попыткой получения цены
 
-        print(f'!!!!!    Запуск торговли    !!!!! {symbol}')
+        logger.info(f'Запуск торговли {symbol}')
 
         while True:
             price = await ws_price.get_price(symbol)
-            buy_order_flag = True  # Флаг, указывающий, нужно ли размещать ордер
 
-            # создаем ордер на покупку, если цена ниже 0,5% от цены последнего ордера
+            if summary_executed := await so_manager.get_summary_executed_qty(symbol):
+                data = {
+                    'price': price,
+                    'summary_executed': summary_executed,
+                    'total_cost_with_fee': (total_cost_with_fee := await so_manager.get_total_cost_with_fee(symbol)),
+                    'be_level_with_fee': total_cost_with_fee / summary_executed,
+                    'profit_target': (profit_target := total_cost_with_fee * config.TARGET_PROFIT),
+                    'total_cost_with_fee_tp': (total_cost_with_fee_tp := total_cost_with_fee + profit_target),
+                    'be_level_with_fee_tp': total_cost_with_fee_tp / summary_executed,
+                    'current_profit': (current_profit := price * summary_executed - total_cost_with_fee),
+                    'profit_to_target': (profit_to_target := price * summary_executed - total_cost_with_fee_tp)
+                }
+
+                await profit_manager.update_data(symbol, data)
+
+                if profit_to_target > 0:
+                    # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
+                    response = await place_sell_order(symbol, summary_executed, session, http_session)
+                    logger.info(response + f'\nДоход: {current_profit}\n')
+                    await sleep(5)  # Пауза после продажи всех ордеров, перед покупкой нового
+
+            # Ордер на покупку, если цена ниже 0,5% от цены последнего ордера (если ордеров нет, то открываем новый)
             if last_order := await so_manager.get_last_order(symbol):
                 last_order_price = last_order['price']
                 next_price = last_order_price - last_order_price * config.GRID_STEP
-                print(f"След цена: {next_price}, Текущая цена: {price}")
+                # print(f"След цена: {next_price}, Текущая цена: {price}")
 
-                if price > next_price:
-                    buy_order_flag = False  # Не размещаем ордер, если цена выше next_price
+                if price < next_price:
+                    if response := await place_buy_order(symbol, price, session, http_session):
+                        logger.info(response)
 
-            if buy_order_flag:
+            else:  # Если нет последнего ордера, то покупаем сразу
                 response = await place_buy_order(symbol, price, session, http_session)
                 logger.info(response)
 
-            # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
-            if await so_manager.get_sell_order_flag(symbol):
-                if response := await place_sell_order(symbol, session, http_session):
-                    logger.info(response)
-                    await so_manager.set_sell_order_flag(symbol, False)  # Очищаем флаг
+            await sleep(0.1)
 
-            await sleep(5)
-
-    if session is None:  # Сессия не передана, создаем новую
+    if session is None:  # Сессия не передана, создаем новый async_session_maker
         async with async_session_maker() as session:
             await trading_logic()
-    else:  # Сессия передана, используем ее
+    else:  # Сессия передана, используем ее (используется в хэндлерах)
         await trading_logic()

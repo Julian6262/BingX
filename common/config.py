@@ -17,12 +17,12 @@ class Config:
         self.SYMBOLS: list = ['BTC', 'BNB', 'SOL', 'ETH', 'XRP', 'ADA', 'LTC', 'LINK', 'TRX']
         self.HEADERS: dict = {'X-BX-APIKEY': self.API_KEY}
 
-        self.GRID_STEP: float = 0.005  # в долях (0.5%)
+        self.GRID_STEP: float = 0.01  # в долях (1%)
         self.TARGET_PROFIT: float = 0.01  # в долях (1%)
-        self.ACCOUNT_BALANCE: float = 1.1  # в долларах, ниже этого баланса не будет работать бот
+        self.ACCOUNT_BALANCE: float = 1.2  # в долларах, ниже этого баланса не будет работать бот
         self.QUANTITY: float = 2  # в долларах
-        self.TAKER: float = 0.0015  # в долях (0.15%)
-        self.MAKER: float = 0.0015
+        self.TAKER: float = 0.002  # в долях (0.2%)
+        self.MAKER: float = 0.002  # в долях (0.2%)
 
         self.FOR_FEE: float = 0.1  # в долях (10% от суммы), резерв для выплаты комиссии
         self.TAKER_MAKER: float = self.TAKER + self.MAKER

@@ -2,6 +2,20 @@ from asyncio import Lock, CancelledError
 from collections import defaultdict
 
 
+class ProfitManager:  # Класс для работы с данными профита
+    def __init__(self):
+        self._profit_data = {}
+        self._lock = Lock()
+
+    async def update_data(self,symbol: str, data: dict):
+        async with self._lock:
+            self._profit_data[symbol] = data
+
+    async def get_data(self, symbol: str):
+        async with self._lock:
+            return self._profit_data.get(symbol, {})
+
+
 class AccountManager:  # Класс для работы с данными счета
     def __init__(self):
         self._balance = {}
@@ -63,7 +77,6 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
         self.symbols = []
-        self._sell_order_flag = {}
         self._step_size = {}
         self._orders = defaultdict(list)  # Словарь для хранения ордеров по символам
         self._lock = Lock()
@@ -74,14 +87,6 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 self.symbols.append(symbol)
                 self._step_size[symbol] = step_size
                 self._orders[symbol] = data
-
-    async def set_sell_order_flag(self, symbol: str, flag: bool):
-        async with self._lock:
-            self._sell_order_flag[symbol] = flag
-
-    async def get_sell_order_flag(self, symbol: str):
-        async with self._lock:
-            return self._sell_order_flag.get(symbol)
 
     async def update_order(self, symbol: str, data: dict):
         async with self._lock:

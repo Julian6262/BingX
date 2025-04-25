@@ -1,16 +1,24 @@
 from datetime import datetime
+from logging import getLogger
+
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database.models import OrderInfo, Symbol
 
+logger = getLogger('my_app')
+
 
 # Добавить новый ордер в БД
 async def add_order(session: AsyncSession, symbol_name: str, data: dict):
-    db_symbol = (await session.execute(select(Symbol).where(Symbol.name == symbol_name))).scalar_one()
-    session.add(OrderInfo(**data, symbol=db_symbol))
-    await session.commit()
+    try:
+        db_symbol = (await session.execute(select(Symbol).where(Symbol.name == symbol_name))).scalar_one_or_none()
+        session.add(OrderInfo(**data, symbol=db_symbol))
+        await session.commit()
+
+    except Exception as e:
+        logger.error(f'Error adding order to DB: {e}')
 
 
 # Удалить из БД последний ордер
@@ -35,11 +43,9 @@ async def load_from_db(session: AsyncSession, so_manager):
 
 
 # Добавить символ в БД
-async def add_symbol(symbol: str, session: AsyncSession, symbol_data):
-    step_size = symbol_data['data']['symbols'][0]['stepSize']
+async def add_symbol(symbol: str, session: AsyncSession, step_size):
     session.add(Symbol(name=symbol, step_size=step_size))
     await session.commit()
-    return step_size
 
 
 # Удалить символ из БД

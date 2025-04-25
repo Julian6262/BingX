@@ -5,8 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, track_be_level, so_manager, \
-    start_trading
+from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, so_manager, start_trading
 from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db
@@ -60,7 +59,6 @@ async def main():
         tasks = (
             manage_listen_key(http_session),
             account_upd_ws(http_session),
-            *(track_be_level(symbol) for symbol in so_manager.symbols),
             *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in
               enumerate(so_manager.symbols)),
             *(start_trading(symbol, http_session=http_session, async_session_maker=async_session_maker) for symbol in
