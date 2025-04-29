@@ -1,7 +1,7 @@
 from datetime import datetime
 from logging import getLogger
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +21,12 @@ async def add_order(session: AsyncSession, symbol_name: str, data: dict):
         logger.error(f'Error adding order to DB: {e}')
 
 
+# Изменить состояние у монеты
+async def update_state(session: AsyncSession, symbol_name: str, state: str):
+    await session.execute(update(Symbol).where(Symbol.name == symbol_name).values(state=state))
+    await session.commit()
+
+
 # Удалить из БД последний ордер
 async def del_last_order(session: AsyncSession, open_time: datetime):
     await session.execute(delete(OrderInfo).where(OrderInfo.open_time == open_time))
@@ -38,13 +44,13 @@ async def load_from_db(session: AsyncSession, so_manager):
     query = select(Symbol).options(selectinload(Symbol.orders))
     symbols = (await session.execute(query)).scalars().all()
 
-    data_batch = [(symbol.name, symbol.step_size, [order.__dict__ for order in symbol.orders]) for symbol in symbols]
+    data_batch = [(symbol, [order.__dict__ for order in symbol.orders]) for symbol in symbols]
     await so_manager.add_symbols_and_orders_batch(data_batch)
 
 
 # Добавить символ в БД
-async def add_symbol(symbol: str, session: AsyncSession, step_size):
-    session.add(Symbol(name=symbol, step_size=step_size))
+async def add_symbol(symbol: str, session: AsyncSession, step_size, state: str = 'stop'):
+    session.add(Symbol(name=symbol, step_size=step_size, state=state))
     await session.commit()
 
 

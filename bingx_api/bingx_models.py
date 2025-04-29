@@ -7,7 +7,7 @@ class ProfitManager:  # Класс для работы с данными про�
         self._profit_data = {}
         self._lock = Lock()
 
-    async def update_data(self,symbol: str, data: dict):
+    async def update_data(self, symbol: str, data: dict):
         async with self._lock:
             self._profit_data[symbol] = data
 
@@ -78,24 +78,36 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     def __init__(self):
         self.symbols = []
         self._step_size = {}
+        self._state = {}
         self._orders = defaultdict(list)  # Словарь для хранения ордеров по символам
         self._lock = Lock()
 
     async def add_symbols_and_orders_batch(self, batch_data: list):
         async with self._lock:
-            for symbol, step_size, data in batch_data:
-                self.symbols.append(symbol)
-                self._step_size[symbol] = step_size
-                self._orders[symbol] = data
+            for symbol, orders in batch_data:
+                self.symbols.append(symbol.name)
+                self._step_size[symbol.name] = symbol.step_size
+                self._state[symbol.name] = symbol.state
+                self._orders[symbol.name] = orders
+
+    async def update_state(self, symbol: str, state: str):
+        async with self._lock:
+            self._state[symbol] = state
+
+    async def get_state(self, symbol: str):
+        async with self._lock:
+            if symbol in self.symbols:
+                return self._state.get(symbol)
 
     async def update_order(self, symbol: str, data: dict):
         async with self._lock:
             self._orders[symbol].append(data)
 
-    async def add_symbol(self, symbol: str, step_size: float):
+    async def add_symbol(self, symbol: str, step_size: float, state: str = 'stop'):
         async with self._lock:
             self.symbols.append(symbol)
             self._step_size[symbol] = step_size
+            self._state[symbol] = state
 
     async def delete_symbol(self, symbol: str):
         async with self._lock:

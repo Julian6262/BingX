@@ -93,7 +93,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     data_for_db = {
         'price': price,
         'executed_qty': execute_qty,
-        'cost': (cost := price * execute_qty),  # Цена за одну монету
+        'cost': (cost := float(order_data['cummulativeQuoteQty'])),  # Цена за одну монету
         'cost_with_fee': cost + cost * config.TAKER_MAKER,  # 0.4% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
     }
@@ -103,7 +103,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         so_manager.update_order(symbol, data_for_db),  # Добавить ордер в память
     )
 
-    return f'\n\nОрдер открыт {symbol}\n{text}\n'
+    return f'\n\nОрдер открыт {symbol}\n{text}\n{str(data)}\n'
 
 
 async def place_sell_order(symbol: str, summary_executed: float, session: AsyncSession, http_session: ClientSession,
@@ -119,7 +119,7 @@ async def place_sell_order(symbol: str, summary_executed: float, session: AsyncS
         tasks = [del_all_orders(session, symbol), so_manager.delete_all_orders(symbol)]
 
     await gather(*tasks)
-    return f'\n\nОрдера закрыты {symbol} сумма: {summary_executed}\n{text}\n'
+    return f'\n\nОрдера закрыты {symbol} сумма: {summary_executed}\n{text}\n{str(data)}\n'
 
 
 async def account_upd_ws(http_session: ClientSession):
@@ -151,7 +151,7 @@ async def account_upd_ws(http_session: ClientSession):
         await sleep(5)
 
 
-@add_task(task_manager, 'price_upd')
+@add_task(task_manager, so_manager, 'price_upd')
 async def price_upd_ws(symbol, **kwargs):
     seconds = kwargs.get('seconds', 0)
     http_session = kwargs.get('http_session')
@@ -189,7 +189,7 @@ async def price_upd_ws(symbol, **kwargs):
         await sleep(5)  # Пауза перед повторным подключением
 
 
-@add_task(task_manager, 'start_trading')
+@add_task(task_manager, so_manager, 'start_trading')
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
@@ -203,6 +203,7 @@ async def start_trading(symbol, **kwargs):
 
         while True:
             price = await ws_price.get_price(symbol)
+            state = await so_manager.get_state(symbol)
 
             if summary_executed := await so_manager.get_summary_executed_qty(symbol):
                 data = {
@@ -222,22 +223,26 @@ async def start_trading(symbol, **kwargs):
                 if profit_to_target > 0:
                     # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
                     response = await place_sell_order(symbol, summary_executed, session, http_session)
-                    logger.info(response + f'\nДоход: {current_profit}\n')
+                    logger.info(response + f'\nРасчет моей программы:\n'
+                                           f'Цена: {price}\n'
+                                           f'Сумма: {summary_executed}\n'
+                                           f'Сумма с комиссией: {total_cost_with_fee}\n'
+                                )
                     await sleep(5)  # Пауза после продажи всех ордеров, перед покупкой нового
 
-            # Ордер на покупку, если цена ниже 0,5% от цены последнего ордера (если ордеров нет, то открываем новый)
-            if last_order := await so_manager.get_last_order(symbol):
-                last_order_price = last_order['price']
-                next_price = last_order_price - last_order_price * config.GRID_STEP
-                # print(f"След цена: {next_price}, Текущая цена: {price}")
+            # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
+            if state == 'track':
+                if last_order := await so_manager.get_last_order(symbol):
+                    last_order_price = last_order['price']
+                    next_price = last_order_price - last_order_price * config.GRID_STEP
 
-                if price < next_price:
-                    if response := await place_buy_order(symbol, price, session, http_session):
+                    if price < next_price:
+                        response = await place_buy_order(symbol, price, session, http_session)
                         logger.info(response)
 
-            else:  # Если нет последнего ордера, то покупаем сразу
-                response = await place_buy_order(symbol, price, session, http_session)
-                logger.info(response)
+                else:  # Если нет последнего ордера, то покупаем сразу
+                    response = await place_buy_order(symbol, price, session, http_session)
+                    logger.info(response)
 
             await sleep(0.1)
 
