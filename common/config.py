@@ -14,7 +14,7 @@ class Config:
         self.TOKEN: str = getenv('TOKEN')
         self.DB_URL: str = getenv('DB_URL')
         self.ADMIN: str = getenv('ADMIN')
-        self.SYMBOLS: list = ['BTC', 'BNB', 'SOL', 'ETH', 'XRP', 'ADA', 'LTC', 'LINK', 'TRX']
+        self.SYMBOLS: tuple = ('BTC', 'BNB', 'SOL', 'ETH', 'XRP', 'ADA', 'LTC', 'LINK', 'TRX')
         self.HEADERS: dict = {'X-BX-APIKEY': self.API_KEY}
 
         self.GRID_STEP: float = 0.01  # в долях (1%)

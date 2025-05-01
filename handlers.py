@@ -30,10 +30,10 @@ async def set_state_cmd(message: Message, session: AsyncSession, http_session: C
         so_manager.update_state(symbol, state_new)
     )
 
-    if state_old in ['track', 'pause'] and state_new == 'stop':
+    if state_old in ('track', 'pause') and state_new == 'stop':
         await task_manager.del_tasks(symbol)
 
-    if state_old == 'stop' and state_new in ['track', 'pause']:
+    elif state_old == 'stop' and state_new in ('track', 'pause'):
         await gather(
             price_upd_ws(symbol, http_session=http_session),
             start_trading(symbol, session=session, http_session=http_session)
@@ -57,13 +57,13 @@ async def get_profit_cmd(message: Message):
     summary_executed = profit_data['summary_executed']
 
     await message.answer(
+        f'\nprice: {price}\n'
         f'summary_executed: {summary_executed}\n'
         f'\nprice * summary_executed: {price * summary_executed}\n'
         f'сумма с комиссией биржи (total_cost_with_fee): {profit_data['total_cost_with_fee']}\n'
         f'сумма с комиссией биржи + 1% (total_cost_with_fee_tp): {profit_data['total_cost_with_fee_tp']}\n'
-        f'\nДоход с учетом комиссии биржи 0,3%: {profit_data['current_profit']}\n'
-        f'Доход с учетом комиссии биржи 0,3% до достижения 1%: {profit_data['profit_to_target']}\n'
-        f'\nprice: {price}\n'
+        f'\nДоход с учетом комиссии биржи: {profit_data['current_profit']}\n'
+        f'Доход с учетом комиссии биржи до достижения 1%: {profit_data['profit_to_target']}\n'
         f'безубыток с комиссией биржи (be_level_with_fee): {profit_data['be_level_with_fee']}\n'
         f'безубыток с комиссией биржи + 1% (be_level_with_fee_tp): {profit_data['be_level_with_fee_tp']}\n'
         # f'До достижения безубыток с комиссией биржи: {be_level_with_fee - price}\n'
@@ -71,10 +71,8 @@ async def get_profit_cmd(message: Message):
     )
 
     orders = await so_manager.get_orders(symbol)
-
-    for order in orders:
-        order_profit = order['executed_qty'] * price - order['cost_with_fee']
-        await message.answer(str(order_profit))
+    order_profits = [order['executed_qty'] * price - order['cost_with_fee'] for order in orders]
+    await message.answer("\n".join(map(str, order_profits)))
 
 
 @router.message(F.text.startswith('b_'))  # Вводим например: b_btc, b_Bnb
@@ -97,16 +95,21 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
     if not (order_data := await so_manager.get_last_order(symbol)):
         return await message.answer('Нет открытых ордеров')
 
-    response = await place_sell_order(symbol, order_data['executed_qty'], session, http_session,
-                                      open_time=order_data['open_time'])
+    data, text = await place_sell_order(symbol, order_data['executed_qty'], session, http_session,
+                                        open_time=order_data['open_time'])
 
     price = await ws_price.get_price(symbol)
-    # order_profit = order_data['cummulativeQuoteQty'] - order_data['cost_with_fee']
-    await message.answer(response + f'\nРасчет моей программы:\n'
-                                    f'Цена: {price}\n'
-                                    f'Сумма: {order_data['executed_qty']}\n'
-                                    f'Сумма с комиссией: {order_data['cost_with_fee']}\n'
-                         )
+    executed_qty = order_data['executed_qty']
+    cost_with_fee = order_data['cost_with_fee']
+
+    report = (f'\nРасчет моей программы:\n'
+              f'price: {price}\n'
+              f'Сумма в бирже price * summary_executed: {price * executed_qty}\n'
+              f'Сумма с комиссией cost_with_fee: {cost_with_fee}\n'
+              f'Доход: {price * executed_qty - cost_with_fee}\n\n'
+              f'Доход cummulativeQuoteQty: {float(data["cummulativeQuoteQty"]) - cost_with_fee}\n')
+
+    await message.answer(text + report if data else text)
 
 
 @router.message(F.text.startswith('d_all_'))
@@ -119,14 +122,17 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
 
     price = await ws_price.get_price(symbol)
     total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
-    current_profit = price * summary_executed - total_cost_with_fee
 
-    response = await place_sell_order(symbol, summary_executed, session, http_session)
-    await message.answer(response + f'\nРасчет моей программы:\n'
-                                    f'Цена: {price}\n'
-                                    f'Сумма: {summary_executed}\n'
-                                    f'Сумма с комиссией: {total_cost_with_fee}\n'
-                         )
+    data, text = await place_sell_order(symbol, summary_executed, session, http_session)
+
+    report = (f'\nРасчет моей программы:\n'
+              f'price: {price}\n'
+              f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
+              f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
+              f'Доход: {price * summary_executed - total_cost_with_fee}\n\n'
+              f'Доход cummulativeQuoteQty: {float(data["cummulativeQuoteQty"]) - total_cost_with_fee}\n')
+
+    await message.answer(text + report if data else text)
 
 
 @router.message(F.text.startswith('add_'))  # Добавить символ в БД
