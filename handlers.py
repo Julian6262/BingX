@@ -87,7 +87,7 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     await message.answer(response)
 
 
-@router.message(F.text.startswith('s_'))  # Вводим например: s_btc, s_Bnb
+@router.message(F.text.startswith('s_'))  # Продажа одного последнего ордера
 async def sell_order_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
     if (symbol := message.text[2:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
@@ -95,24 +95,16 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
     if not (order_data := await so_manager.get_last_order(symbol)):
         return await message.answer('Нет открытых ордеров')
 
-    data, text = await place_sell_order(symbol, order_data['executed_qty'], session, http_session,
-                                        open_time=order_data['open_time'])
+    profit_data = await profit_manager.get_data(symbol)
+    profit_data['total_cost_with_fee'] = order_data['cost_with_fee'] # перезаписать стоимость по последнему ордеру
 
-    price = await ws_price.get_price(symbol)
-    executed_qty = order_data['executed_qty']
-    cost_with_fee = order_data['cost_with_fee']
+    report = await place_sell_order(symbol, order_data['executed_qty'], session, http_session, data=profit_data,
+                                    open_time=order_data['open_time'])
 
-    report = (f'\nРасчет моей программы:\n'
-              f'price: {price}\n'
-              f'Сумма в бирже price * summary_executed: {price * executed_qty}\n'
-              f'Сумма с комиссией cost_with_fee: {cost_with_fee}\n'
-              f'Доход: {price * executed_qty - cost_with_fee}\n\n'
-              f'Доход cummulativeQuoteQty: {float(data["cummulativeQuoteQty"]) - cost_with_fee}\n')
-
-    await message.answer(text + report if data else text)
+    await message.answer(report)
 
 
-@router.message(F.text.startswith('d_all_'))
+@router.message(F.text.startswith('s_all_')) # Продажа всех ордеров
 async def del_orders_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
     if (symbol := message.text[6:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
@@ -120,19 +112,10 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
     if (summary_executed := await so_manager.get_summary_executed_qty(symbol)) is None:
         return await message.answer('Нет открытых ордеров')
 
-    price = await ws_price.get_price(symbol)
-    total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
+    profit_data = await profit_manager.get_data(symbol)
+    report = await place_sell_order(symbol, summary_executed, session, http_session, data=profit_data)
 
-    data, text = await place_sell_order(symbol, summary_executed, session, http_session)
-
-    report = (f'\nРасчет моей программы:\n'
-              f'price: {price}\n'
-              f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
-              f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
-              f'Доход: {price * summary_executed - total_cost_with_fee}\n\n'
-              f'Доход cummulativeQuoteQty: {float(data["cummulativeQuoteQty"]) - total_cost_with_fee}\n')
-
-    await message.answer(text + report if data else text)
+    await message.answer(report)
 
 
 @router.message(F.text.startswith('add_'))  # Добавить символ в БД
@@ -166,6 +149,9 @@ async def del_symbol_cmd(message: Message, session: AsyncSession):
     if await so_manager.get_orders(symbol):
         return await message.answer('По данному символу есть ордера')
 
+    if await so_manager.get_profit(symbol):
+        return await message.answer('По данному символу есть профит')
+
     await gather(
         del_symbol(symbol, session),
         so_manager.delete_symbol(symbol),
@@ -177,10 +163,16 @@ async def del_symbol_cmd(message: Message, session: AsyncSession):
 # ----------------- T E S T ---------------------------------------
 @router.message(CommandStart())
 async def start_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
-    print(task_manager._tasks)
-    print(so_manager._orders)
-    print(await so_manager.get_state('TRX'))
-    print(await so_manager.get_state('ADA'))
-    print(await so_manager.get_state('XRP'))
-    for symbol in so_manager.symbols:
-        print(symbol, await ws_price.get_price(symbol))
+    for tasks in task_manager._tasks.items():
+        print(tasks)
+    for tasks in so_manager._data.items():
+        print(tasks)
+
+    profit = await so_manager.get_profit('ADA')
+    await message.answer(f'profit ADA {profit}')
+    profit = await so_manager.get_profit('TRX')
+    await message.answer(f'profit TRX {profit}')
+    profit = await so_manager.get_profit('XRP')
+    await message.answer(f'profit XRP {profit}')
+    sum_profit = await so_manager.get_summary_profit()
+    await message.answer(f'sum_profit {sum_profit}')

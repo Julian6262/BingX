@@ -16,6 +16,7 @@ class Symbol(Base):
 
     name: Mapped[str] = mapped_column(String(10), unique=True)
     step_size: Mapped[float] = mapped_column(Float)
+    profit: Mapped[float] = mapped_column(Float, default=0.0)
     state: Mapped[str] = mapped_column(String(15), default='stop')
 
     orders: Mapped[List["OrderInfo"]] = relationship(back_populates="symbol")

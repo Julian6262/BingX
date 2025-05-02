@@ -11,7 +11,7 @@ from bingx_api.api_client import send_request
 from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager
 from common.config import config
 from common.func import get_decimal_places, add_task
-from database.orm_query import add_order, del_all_orders, del_last_order
+from database.orm_query import add_order, update_profit, del_orders
 
 logger = getLogger('my_app')
 
@@ -107,19 +107,36 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
 
 async def place_sell_order(symbol: str, summary_executed: float, session: AsyncSession, http_session: ClientSession,
-                           open_time: datetime = None):
+                           data: dict, open_time: datetime = None):
     # Ордер на продажу по суммарной стоимости покупки монеты, напр 0.00011 BTC
-    data, text = await place_order(symbol, http_session, 'SELL', executed_qty=summary_executed)
-    if not (order_data := data.get("data")):
-        return None, f'\n\nПродажа не прошла: {text}\n{str(data)}\n'
+    order_data, text = await place_order(symbol, http_session, 'SELL', executed_qty=summary_executed)
+    if not (order_data_ok := order_data.get("data")):
+        report = f'\n\nПродажа не прошла: {text}\n{str(order_data)}\n\n'
+        logger.error(report)
+        return report
 
-    if open_time:
-        tasks = [del_last_order(session, open_time), so_manager.delete_last_order(symbol)]
-    else:
-        tasks = [del_all_orders(session, symbol), so_manager.delete_all_orders(symbol)]
+    so_manager.pause_after_sell = True
+    real_profit = float(order_data_ok["cummulativeQuoteQty"]) - data['total_cost_with_fee']
 
-    await gather(*tasks)
-    return order_data, f'\n\nОрдера закрыты {symbol} сумма: {summary_executed}\n{text}\n{str(data)}\n'
+    await update_profit(symbol, session, real_profit)
+    await so_manager.update_profit(symbol, real_profit)
+
+    await del_orders(symbol, session, open_time)
+    await so_manager.del_orders(symbol, open_time)
+
+    await session.commit()
+
+    report = (f'\nРасчет моей программы:\n'
+              f'price: {data['price']}\n'
+              f'summary_executed: {summary_executed}\n'
+              f'Сумма в бирже price * summary_executed: {data['price'] * summary_executed}\n'
+              f'Сумма с комиссией total_cost_with_fee: {data['total_cost_with_fee']}\n'
+              f'Доход: {data['price'] * summary_executed - data['total_cost_with_fee']}\n\n'
+              f'Доход cummulativeQuoteQty: {real_profit}\n'
+              f'\n\nОрдера закрыты {symbol}\n{text}\n{str(order_data_ok)}\n\n')
+
+    logger.info(report)
+    return report
 
 
 async def account_upd_ws(http_session: ClientSession):
@@ -194,6 +211,7 @@ async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
     async_session_maker = kwargs.get('async_session_maker')
+    target_profit = config.TARGET_PROFIT
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
@@ -207,11 +225,11 @@ async def start_trading(symbol, **kwargs):
 
             if summary_executed := await so_manager.get_summary_executed_qty(symbol):
                 total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
-                total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
+                total_cost_with_fee_tp = total_cost_with_fee * (1 + target_profit)
                 current_profit = price * summary_executed - total_cost_with_fee
                 profit_to_target = price * summary_executed - total_cost_with_fee_tp
 
-                data = {
+                profit_data = {
                     'price': price,
                     'summary_executed': summary_executed,
                     'total_cost_with_fee': total_cost_with_fee,
@@ -222,25 +240,18 @@ async def start_trading(symbol, **kwargs):
                     'profit_to_target': profit_to_target
                 }
 
-                await profit_manager.update_data(symbol, data)
+                await profit_manager.update_data(symbol, profit_data)
 
                 if profit_to_target > 0:
                     # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
-                    data, text = await place_sell_order(symbol, summary_executed, session, http_session)
-
-                    report = (f'\nРасчет моей программы:\n'
-                              f'price: {price}\n'
-                              f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
-                              f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
-                              f'Доход: {price * summary_executed - total_cost_with_fee}\n\n'
-                              f'Доход cummulativeQuoteQty: {float(data["cummulativeQuoteQty"]) - total_cost_with_fee}\n')
-
-                    logger.info(text + report if data else text)
-
-                    await sleep(4)  # Пауза после продажи всех ордеров, перед покупкой нового
+                    await place_sell_order(symbol, summary_executed, session, http_session, profit_data)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
             if state == 'track':
+                if so_manager.pause_after_sell:
+                    await sleep(5)  # Задержка перед покупкой
+                    so_manager.pause_after_sell = False
+
                 if last_order := await so_manager.get_last_order(symbol):
                     next_price = last_order['price'] * (1 - config.GRID_STEP)
 

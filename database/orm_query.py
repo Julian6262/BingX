@@ -14,7 +14,8 @@ logger = getLogger('my_app')
 async def add_order(session: AsyncSession, symbol_name: str, data: dict):
     try:
         db_symbol = (await session.execute(select(Symbol).where(Symbol.name == symbol_name))).scalar_one_or_none()
-        session.add(OrderInfo(**data, symbol=db_symbol))
+        new_order = OrderInfo(**data, symbol=db_symbol)
+        session.add(new_order)
         await session.commit()
 
     except Exception as e:
@@ -27,16 +28,15 @@ async def update_state(session: AsyncSession, symbol_name: str, state: str):
     await session.commit()
 
 
-# Удалить из БД последний ордер
-async def del_last_order(session: AsyncSession, open_time: datetime):
-    await session.execute(delete(OrderInfo).where(OrderInfo.open_time == open_time))
-    await session.commit()
+# Удалить из БД последний ордер / или все ордера
+async def del_orders(symbol_name: str, session: AsyncSession, open_time: datetime = None):
+    query = (OrderInfo.open_time == open_time) if open_time else OrderInfo.symbol.has(name=symbol_name)
+    await session.execute(delete(OrderInfo).where(query))
 
 
-# Удалить из БД все ордера
-async def del_all_orders(session: AsyncSession, symbol_name: str):
-    await session.execute(delete(OrderInfo).where(OrderInfo.symbol.has(name=symbol_name)))
-    await session.commit()
+# Обновить профит в БД по символу
+async def update_profit(symbol: str, session: AsyncSession, profit_diff: float):
+    await session.execute(update(Symbol).where(Symbol.name == symbol).values(profit=Symbol.profit + profit_diff))
 
 
 # Загружаем все ордера и symbols из БД в память
@@ -50,7 +50,7 @@ async def load_from_db(session: AsyncSession, so_manager):
 
 # Добавить символ в БД
 async def add_symbol(symbol: str, session: AsyncSession, step_size, state: str = 'stop'):
-    session.add(Symbol(name=symbol, step_size=step_size, state=state))
+    session.add(Symbol(name=symbol, step_size=step_size, state=state, profit=0.0))
     await session.commit()
 
 
