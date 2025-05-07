@@ -2,6 +2,8 @@ from asyncio import sleep, gather
 from datetime import datetime
 from decimal import Decimal
 from gzip import decompress
+from time import time
+
 from aiohttp import ClientSession, WSMsgType
 from sqlalchemy.ext.asyncio import AsyncSession
 from logging import getLogger
@@ -20,6 +22,13 @@ so_manager = SymbolOrderManager()
 account_manager = AccountManager()
 task_manager = TaskManager()
 profit_manager = ProfitManager()
+
+
+async def get_candlestick_data(symbol: str, session: ClientSession, interval: str):
+    endpoint = '/openApi/spot/v2/market/kline'
+    params = {"symbol": f'{symbol}-USDT', "interval": interval, "limit": 200}
+
+    return await send_request("GET", session, endpoint, params)
 
 
 async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float | Decimal):
@@ -139,6 +148,45 @@ async def place_sell_order(symbol: str, summary_executed: float, session: AsyncS
     return report
 
 
+# @add_task(task_manager, so_manager, 'kline_upd_ws')
+# async def kline_upd_ws(symbol, **kwargs):
+#     seconds = kwargs.get('seconds', 0)
+#     http_session = kwargs.get('http_session')
+#
+#     channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@kline_3min"}
+#     await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
+#
+#     while True:  # Цикл для повторного подключения
+#         try:
+#             async with http_session.ws_connect(config.URL_WS) as ws:
+#                 logger.info(f"WebSocket connected kline_upd_ws for {symbol}")
+#                 await ws.send_json(channel)
+#
+#                 async for message in ws:
+#                     if ws.closed:
+#                         logger.warning(f"Соединение WebSocket закрыто {symbol}")
+#                         break
+#
+#                     if message.type in (WSMsgType.TEXT, WSMsgType.BINARY):  # Проверка типа сообщения.
+#                         try:
+#                             if 'data' in (data := loads(decompress(message.data).decode())):
+#                                 # await ws_price.update_price(symbol, float(data["data"]["c"]))
+#                                 print('kline_upd_ws', data["data"])
+#
+#                         except Exception as e:
+#                             logger.error(f"Непредвиденная ошибка kline_upd_ws: {e}, сообщение: {message.data}")
+#
+#                     else:  # Обработка всех остальных типов сообщений
+#                         logger.error(f"Неизвестный тип сообщения WebSocket: {message.type}, данные: {message.data}")
+#                         break
+#
+#         except Exception as e:
+#             logger.error(f"Критическая ошибка kline_upd_ws: {symbol}, {e}")
+#
+#         logger.error(f"kline_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
+#         await sleep(5)  # Пауза перед повторным подключением
+
+
 async def account_upd_ws(http_session: ClientSession):
     while not (listen_key := await account_manager.get_listen_key()):
         await sleep(0.5)  # Задержка перед попыткой получения ключа
@@ -190,7 +238,7 @@ async def price_upd_ws(symbol, **kwargs):
                     if message.type in (WSMsgType.TEXT, WSMsgType.BINARY):  # Проверка типа сообщения.
                         try:
                             if 'data' in (data := loads(decompress(message.data).decode())):
-                                await ws_price.update_price(symbol, float(data["data"]["c"]))
+                                await ws_price.update_price(symbol, int(time() * 1000), float(data["data"]["c"]))
 
                         except Exception as e:
                             logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message.data}")
@@ -220,7 +268,7 @@ async def start_trading(symbol, **kwargs):
         logger.info(f'Запуск торговли {symbol}')
 
         while True:
-            price = await ws_price.get_price(symbol)
+            _, price = await ws_price.get_price(symbol)
             state = await so_manager.get_state(symbol)
 
             if summary_executed := await so_manager.get_summary_executed_qty(symbol):

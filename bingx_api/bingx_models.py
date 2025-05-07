@@ -41,6 +41,20 @@ class AccountManager:  # Класс для работы с данными сче
             return self._listen_key
 
 
+# class IndicatorManager:  # Класс для работы с индикаторами
+#     def __init__(self):
+#         self._start_candles = {}
+#         self._lock = Lock()
+#
+#     async def add_start_candles(self, symbol: str, candlestick_data: ndarray):
+#         async with self._lock:
+#             self._start_candles[symbol] = candlestick_data
+#
+#     async def get_start_candles(self, symbol: str):
+#         async with self._lock:
+#             return self._start_candles.get(symbol)
+
+
 class TaskManager:  # Класс для работы с задачами
     def __init__(self):
         self._tasks = defaultdict(list)
@@ -63,22 +77,23 @@ class TaskManager:  # Класс для работы с задачами
 
 class WebSocketPrice:  # Класс для работы с ценами в реальном времени из websockets
     def __init__(self):
-        self._price = {}
+        self._data = {}
         self._lock = Lock()
 
-    async def update_price(self, symbol: str, price: float):
+    async def update_price(self, symbol: str, time: int, price: float):
         async with self._lock:
-            self._price[symbol] = price
+            self._data[symbol] = time, price
 
     async def get_price(self, symbol: str):
         async with self._lock:
-            return self._price.get(symbol)
+            return self._data.get(symbol)
 
 
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
         self.symbols = []
         self.pause_after_sell = False
+        self.buy_sell_trigger = 'new'
         self._data = defaultdict(lambda: {'step_size': 0.0, 'state': 'stop', 'profit': 0.0, 'orders': []})
         self._lock = Lock()
 

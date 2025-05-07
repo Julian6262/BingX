@@ -10,6 +10,7 @@ from bingx_api.bingx_command import price_upd_ws, get_symbol_info, start_trading
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
+from indicators.indicator_models import start_indicator
 
 router = Router()
 router.message.filter(IsAdmin(config.ADMIN))  # Фильтр по ID, кто может пользоваться ботом
@@ -87,24 +88,7 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     await message.answer(response)
 
 
-@router.message(F.text.startswith('s_'))  # Продажа одного последнего ордера
-async def sell_order_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
-    if (symbol := message.text[2:].upper()) not in so_manager.symbols:
-        return await message.answer('Не такой символ')
-
-    if not (order_data := await so_manager.get_last_order(symbol)):
-        return await message.answer('Нет открытых ордеров')
-
-    profit_data = await profit_manager.get_data(symbol)
-    profit_data['total_cost_with_fee'] = order_data['cost_with_fee'] # перезаписать стоимость по последнему ордеру
-
-    report = await place_sell_order(symbol, order_data['executed_qty'], session, http_session, data=profit_data,
-                                    open_time=order_data['open_time'])
-
-    await message.answer(report)
-
-
-@router.message(F.text.startswith('s_all_')) # Продажа всех ордеров
+@router.message(F.text.startswith('s_all_'))  # Продажа всех ордеров
 async def del_orders_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
     if (symbol := message.text[6:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
@@ -114,6 +98,23 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
 
     profit_data = await profit_manager.get_data(symbol)
     report = await place_sell_order(symbol, summary_executed, session, http_session, data=profit_data)
+
+    await message.answer(report)
+
+
+@router.message(F.text.startswith('s_'))  # Продажа одного последнего ордера
+async def sell_order_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
+    if (symbol := message.text[2:].upper()) not in so_manager.symbols:
+        return await message.answer('Не такой символ')
+
+    if not (order_data := await so_manager.get_last_order(symbol)):
+        return await message.answer('Нет открытых ордеров')
+
+    profit_data = await profit_manager.get_data(symbol)
+    profit_data['total_cost_with_fee'] = order_data['cost_with_fee']  # перезаписать стоимость по последнему ордеру
+
+    report = await place_sell_order(symbol, order_data['executed_qty'], session, http_session, data=profit_data,
+                                    open_time=order_data['open_time'])
 
     await message.answer(report)
 
@@ -176,3 +177,7 @@ async def start_cmd(message: Message, session: AsyncSession, http_session: Clien
     await message.answer(f'profit XRP {profit}')
     sum_profit = await so_manager.get_summary_profit()
     await message.answer(f'sum_profit {sum_profit}')
+
+    await start_indicator('ADA', http_session, '3m')
+
+    # await kline_upd_ws('ADA', http_session)

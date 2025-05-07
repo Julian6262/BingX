@@ -10,6 +10,8 @@ from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db
 from handlers import router
+from indicators.indicator_models import start_indicator
+
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
 
@@ -59,6 +61,8 @@ async def main():
         tasks = (
             manage_listen_key(http_session),
             account_upd_ws(http_session),
+            # kline_upd_ws('ADA', http_session=http_session, seconds=0),
+            start_indicator('BTC', http_session, '1m'),
             *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in
               enumerate(so_manager.symbols)),
             *(start_trading(symbol, http_session=http_session, async_session_maker=async_session_maker) for symbol in
