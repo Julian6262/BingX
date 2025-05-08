@@ -16,7 +16,7 @@ def add_task(outer_func, so_manager, text: str):
         @wraps(func)
         async def wrapper(symbol, *args, **kwargs):
             if await so_manager.get_state(symbol) == 'stop':
-                print(f'Отслеживание {text} {symbol} не запущено, т.к. state = STOP')
+                print(f'Отслеживание {text} {symbol} не запущено, state = STOP')
                 return
 
             task = create_task(func(symbol, *args, **kwargs))

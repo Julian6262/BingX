@@ -41,20 +41,6 @@ class AccountManager:  # Класс для работы с данными сче
             return self._listen_key
 
 
-# class IndicatorManager:  # Класс для работы с индикаторами
-#     def __init__(self):
-#         self._start_candles = {}
-#         self._lock = Lock()
-#
-#     async def add_start_candles(self, symbol: str, candlestick_data: ndarray):
-#         async with self._lock:
-#             self._start_candles[symbol] = candlestick_data
-#
-#     async def get_start_candles(self, symbol: str):
-#         async with self._lock:
-#             return self._start_candles.get(symbol)
-
-
 class TaskManager:  # Класс для работы с задачами
     def __init__(self):
         self._tasks = defaultdict(list)
@@ -92,9 +78,9 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
         self.symbols = []
-        self.pause_after_sell = False
-        self.buy_sell_trigger = 'new'
-        self._data = defaultdict(lambda: {'step_size': 0.0, 'state': 'stop', 'profit': 0.0, 'orders': []})
+        self._data = defaultdict(
+            lambda: {'step_size': 0.0, 'state': 'stop', 'pause_after_sell': False, 'b_s_trigger': 'new', 'profit': 0.0,
+                     'orders': []})
         self._lock = Lock()
 
     async def add_symbols_and_orders_batch(self, batch_data: list):
@@ -105,6 +91,22 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 self._data[symbol.name]['state'] = symbol.state
                 self._data[symbol.name]['profit'] = symbol.profit
                 self._data[symbol.name]['orders'] = orders
+
+    async def set_b_s_trigger(self, symbol: str, trigger: str):
+        async with self._lock:
+            self._data[symbol]['b_s_trigger'] = trigger
+
+    async def get_b_s_trigger(self, symbol: str):
+        async with self._lock:
+            return self._data.get(symbol).get('b_s_trigger')
+
+    async def set_pause(self, symbol: str, state: bool):
+        async with self._lock:
+            self._data[symbol]['pause_after_sell'] = state
+
+    async def get_pause(self, symbol: str):
+        async with self._lock:
+            return self._data.get(symbol).get('pause_after_sell')
 
     async def update_state(self, symbol: str, state: str):
         async with self._lock:

@@ -24,9 +24,9 @@ task_manager = TaskManager()
 profit_manager = ProfitManager()
 
 
-async def get_candlestick_data(symbol: str, session: ClientSession, interval: str):
+async def get_candlestick_data(symbol: str, session: ClientSession, interval: str, limit: int):
     endpoint = '/openApi/spot/v2/market/kline'
-    params = {"symbol": f'{symbol}-USDT', "interval": interval, "limit": 200}
+    params = {"symbol": f'{symbol}-USDT', "interval": interval, "limit": limit}
 
     return await send_request("GET", session, endpoint, params)
 
@@ -60,37 +60,35 @@ async def manage_listen_key(http_session: ClientSession):
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    if (acc_money_usdt := await account_manager.get_balance('USDT')) < config.ACCOUNT_BALANCE:
-        # return f'Баланс слишком маленький: {acc_money_usdt}'
-        return None
+    if (usdt_balance := await account_manager.get_balance('USDT')) < config.ACCOUNT_BALANCE:
+        return f'Баланс слишком маленький: {usdt_balance}'
+        # return None
 
     acc_money = await account_manager.get_balance(symbol)
     step_size = await so_manager.get_step_size(symbol)
     sum_executed_qty = await so_manager.get_summary_executed_qty(symbol)
     execute_qty = config.QUANTITY / price
-    for_fee = execute_qty * config.FOR_FEE  # Берем 10% от суммы с запасом на комиссию при покупке
+    fee_reserve = execute_qty * config.FOR_FEE  # Берем 10% от суммы с запасом на комиссию при покупке
 
-    execute_qty_c = execute_qty if acc_money - sum_executed_qty > for_fee else execute_qty + max(for_fee, step_size)
+    if acc_money - sum_executed_qty > fee_reserve:
+        execute_qty_c = execute_qty
+        take_fee = "НЕТ"
+    else:
+        execute_qty_c = execute_qty + fee_reserve
+        take_fee = "ДА"
 
     # Округляем до ближайшего кратного step_size
     decimal_places = get_decimal_places(step_size)
-    execute_qty = round(execute_qty, decimal_places)
-    execute_qty_c = round(execute_qty_c, decimal_places)
+    execute_qty, execute_qty_c = round(execute_qty, decimal_places), round(execute_qty_c, decimal_places)
 
-    data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty_c)  # Ордер на покупку
+    data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty_c)
     if not (order_data := data.get("data")):
         return f'\n\nОрдер НЕ открыт {symbol}: {text}\n'
-
-    # Если сумма USDT меньше execute_qty_c, используем уменьшенную сумму executedQty из ответа на запрос
-    # -step_size* для того, чтобы при продаже был резерв для комиссии
-    executed_qty_order = float(order_data['executedQty'])
-    orig_qty_order = float(order_data['origQty'])
-    execute_qty = execute_qty if executed_qty_order == orig_qty_order else (executed_qty_order - step_size)
 
     data_for_db = {
         'price': price,
         'executed_qty': execute_qty,
-        'cost': (cost := float(order_data['cummulativeQuoteQty'])),  # Цена за одну монету
+        'cost': (cost := float(order_data['cummulativeQuoteQty']) if take_fee == "НЕТ" else price * execute_qty),
         'cost_with_fee': cost * (1 + config.TAKER_MAKER),  # 0.4% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
     }
@@ -104,11 +102,11 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         f'\n\nденьги: {acc_money}\n'
         f'summary_executed_qty: {sum_executed_qty}\n'
         f'acc_money - summary_executed_qty: {acc_money - sum_executed_qty}\n'
-        f'Берем комиссию: {'НЕТ' if acc_money - sum_executed_qty > for_fee else 'ДА'}\n'
-        f'for_fee 10%: {for_fee}\n'
+        f'Берем комиссию?: {take_fee}\n'
+        f'fee_reserve 10%: {fee_reserve}\n'
         f'decimal_places: {decimal_places}\n'
         f'шаг {step_size}\n'
-        f'execute_qty (учитывает step_size): {execute_qty}\n'
+        f'execute_qty: {execute_qty}\n'
         f'execute_qty_c: {execute_qty_c}\n'
     )
 
@@ -124,9 +122,9 @@ async def place_sell_order(symbol: str, summary_executed: float, session: AsyncS
         logger.error(report)
         return report
 
-    so_manager.pause_after_sell = True
     real_profit = float(order_data_ok["cummulativeQuoteQty"]) - data['total_cost_with_fee']
 
+    await so_manager.set_pause(symbol, True)
     await update_profit(symbol, session, real_profit)
     await so_manager.update_profit(symbol, real_profit)
 
@@ -146,45 +144,6 @@ async def place_sell_order(symbol: str, summary_executed: float, session: AsyncS
 
     logger.info(report)
     return report
-
-
-# @add_task(task_manager, so_manager, 'kline_upd_ws')
-# async def kline_upd_ws(symbol, **kwargs):
-#     seconds = kwargs.get('seconds', 0)
-#     http_session = kwargs.get('http_session')
-#
-#     channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@kline_3min"}
-#     await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
-#
-#     while True:  # Цикл для повторного подключения
-#         try:
-#             async with http_session.ws_connect(config.URL_WS) as ws:
-#                 logger.info(f"WebSocket connected kline_upd_ws for {symbol}")
-#                 await ws.send_json(channel)
-#
-#                 async for message in ws:
-#                     if ws.closed:
-#                         logger.warning(f"Соединение WebSocket закрыто {symbol}")
-#                         break
-#
-#                     if message.type in (WSMsgType.TEXT, WSMsgType.BINARY):  # Проверка типа сообщения.
-#                         try:
-#                             if 'data' in (data := loads(decompress(message.data).decode())):
-#                                 # await ws_price.update_price(symbol, float(data["data"]["c"]))
-#                                 print('kline_upd_ws', data["data"])
-#
-#                         except Exception as e:
-#                             logger.error(f"Непредвиденная ошибка kline_upd_ws: {e}, сообщение: {message.data}")
-#
-#                     else:  # Обработка всех остальных типов сообщений
-#                         logger.error(f"Неизвестный тип сообщения WebSocket: {message.type}, данные: {message.data}")
-#                         break
-#
-#         except Exception as e:
-#             logger.error(f"Критическая ошибка kline_upd_ws: {symbol}, {e}")
-#
-#         logger.error(f"kline_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
-#         await sleep(5)  # Пауза перед повторным подключением
 
 
 async def account_upd_ws(http_session: ClientSession):
@@ -261,6 +220,8 @@ async def start_trading(symbol, **kwargs):
     async_session_maker = kwargs.get('async_session_maker')
     target_profit = config.TARGET_PROFIT
 
+    # so_manager.pause_after_sell[symbol] = False
+
     async def trading_logic():
         while not await ws_price.get_price(symbol):
             await sleep(0.5)  # Задержка перед попыткой получения цены
@@ -296,9 +257,9 @@ async def start_trading(symbol, **kwargs):
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
             if state == 'track':
-                if so_manager.pause_after_sell:
+                if await so_manager.get_pause(symbol):
                     await sleep(5)  # Задержка перед покупкой
-                    so_manager.pause_after_sell = False
+                    await so_manager.set_pause(symbol, False)
 
                 if last_order := await so_manager.get_last_order(symbol):
                     next_price = last_order['price'] * (1 - config.GRID_STEP)

@@ -61,8 +61,7 @@ async def main():
         tasks = (
             manage_listen_key(http_session),
             account_upd_ws(http_session),
-            # kline_upd_ws('ADA', http_session=http_session, seconds=0),
-            start_indicator('BTC', http_session, '1m'),
+            *(start_indicator(symbol, http_session, '1m') for symbol in so_manager.symbols),
             *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in
               enumerate(so_manager.symbols)),
             *(start_trading(symbol, http_session=http_session, async_session_maker=async_session_maker) for symbol in

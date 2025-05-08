@@ -81,10 +81,11 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     if (symbol := message.text[2:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
 
-    if (price := await ws_price.get_price(symbol)) is None:  # Получить цену монеты
+    price_data = await ws_price.get_price(symbol)
+    if price_data is None:
         return await message.answer('Цена не готова')
 
-    response = await place_buy_order(symbol, price, session, http_session)
+    response = await place_buy_order(symbol, price_data[1], session, http_session)
     await message.answer(response)
 
 
@@ -177,7 +178,3 @@ async def start_cmd(message: Message, session: AsyncSession, http_session: Clien
     await message.answer(f'profit XRP {profit}')
     sum_profit = await so_manager.get_summary_profit()
     await message.answer(f'sum_profit {sum_profit}')
-
-    await start_indicator('ADA', http_session, '3m')
-
-    # await kline_upd_ws('ADA', http_session)
