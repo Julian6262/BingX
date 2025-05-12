@@ -25,16 +25,18 @@ async def start_indicator(symbol: str, http_session: ClientSession, interval, li
         logger.error(f'Ошибка получения данных candlestick: {data}, {text}')
         return
 
+    logger.info(f'Запуск start_indicator {symbol}')
+
     start_times, close_prices = zip(*[(item[0], item[4]) for item in reversed(data_ok)])
     close_prices_deque = deque(close_prices, maxlen=limit)
-    delta = timedelta(minutes=1)
-    next_candle_time = datetime.fromtimestamp(int(start_times[-1]) / 1000) + delta
+    delta = 1 * 60 * 1000 - 1  # 1 минута
+    next_candle_time = start_times[-1] + delta
 
     while True:
         time_now, price = await ws_price.get_price(symbol)
-        time_now = datetime.fromtimestamp(time_now / 1000)
 
         if time_now >= next_candle_time:
+            close_prices_deque[-1] = price
             close_prices_deque.append(price)
             next_candle_time += delta  # Обновляем время следующей свечи
 
@@ -42,13 +44,17 @@ async def start_indicator(symbol: str, http_session: ClientSession, interval, li
             _, _, hist = talib.MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
 
             if hist[-2] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
-                print(f'\nПокупаем {symbol}, {time_now}')
-                print(f'{hist[-10:]}\n')
                 await so_manager.set_b_s_trigger(symbol, 'buy')
+                # -----------------------------------------------
+                if symbol == 'ADA':
+                    print(f'\nПокупаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}')
+                    print(f'{hist[-7:]}\n')
 
             elif hist[-2] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
-                print(f'Продаем {symbol}, {time_now}')
-                print(f'{hist[-10:]}\n')
                 await so_manager.set_b_s_trigger(symbol, 'sell')
+                # -----------------------------------------------
+                if symbol == 'ADA':
+                    print(f'\nПродаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}')
+                    print(f'{hist[-7:]}\n')
 
-        await sleep(0.1)
+        await sleep(0.05)

@@ -24,7 +24,7 @@ class Config:
         self.TAKER: float = 0.002  # в долях (0.2%)
         self.MAKER: float = 0.002  # в долях (0.2%)
 
-        self.FOR_FEE: float = 0.1  # в долях (10% от суммы), резерв для выплаты комиссии
+        self.FEE_RESERVE: float = 0.2  # в долях (20% от суммы), резерв для выплаты комиссии (~ 200 ордеров)
         self.TAKER_MAKER: float = self.TAKER + self.MAKER
 
 

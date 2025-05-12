@@ -33,11 +33,13 @@ async def set_state_cmd(message: Message, session: AsyncSession, http_session: C
 
     if state_old in ('track', 'pause') and state_new == 'stop':
         await task_manager.del_tasks(symbol)
+        await so_manager.set_b_s_trigger(symbol, 'new')
 
     elif state_old == 'stop' and state_new in ('track', 'pause'):
         await gather(
             price_upd_ws(symbol, http_session=http_session),
-            start_trading(symbol, session=session, http_session=http_session)
+            start_trading(symbol, session=session, http_session=http_session),
+            start_indicator(symbol, http_session=http_session, interval='1m')
         )
 
     await message.answer(f"Статус монеты {symbol} изменен c {state_old} на {state_new}")
@@ -81,11 +83,11 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     if (symbol := message.text[2:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
 
-    price_data = await ws_price.get_price(symbol)
-    if price_data is None:
+    _, price = await ws_price.get_price(symbol)
+    if price is None:
         return await message.answer('Цена не готова')
 
-    response = await place_buy_order(symbol, price_data[1], session, http_session)
+    response = await place_buy_order(symbol, price, session, http_session)
     await message.answer(response)
 
 
@@ -97,8 +99,9 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
     if (summary_executed := await so_manager.get_summary_executed_qty(symbol)) is None:
         return await message.answer('Нет открытых ордеров')
 
-    profit_data = await profit_manager.get_data(symbol)
-    report = await place_sell_order(symbol, summary_executed, session, http_session, data=profit_data)
+    total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
+
+    report = await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
 
     await message.answer(report)
 
@@ -111,11 +114,8 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
     if not (order_data := await so_manager.get_last_order(symbol)):
         return await message.answer('Нет открытых ордеров')
 
-    profit_data = await profit_manager.get_data(symbol)
-    profit_data['total_cost_with_fee'] = order_data['cost_with_fee']  # перезаписать стоимость по последнему ордеру
-
-    report = await place_sell_order(symbol, order_data['executed_qty'], session, http_session, data=profit_data,
-                                    open_time=order_data['open_time'])
+    report = await place_sell_order(symbol, order_data['executed_qty'], order_data['cost_with_fee'], session,
+                                    http_session, open_times=[order_data['open_time']])
 
     await message.answer(report)
 

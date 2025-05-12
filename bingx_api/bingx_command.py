@@ -61,16 +61,15 @@ async def manage_listen_key(http_session: ClientSession):
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
     if (usdt_balance := await account_manager.get_balance('USDT')) < config.ACCOUNT_BALANCE:
-        return f'Баланс слишком маленький: {usdt_balance}'
-        # return None
+        # return f'Баланс слишком маленький: {usdt_balance}'
+        return None
 
     acc_money = await account_manager.get_balance(symbol)
     step_size = await so_manager.get_step_size(symbol)
-    sum_executed_qty = await so_manager.get_summary_executed_qty(symbol)
     execute_qty = config.QUANTITY / price
-    fee_reserve = execute_qty * config.FOR_FEE  # Берем 10% от суммы с запасом на комиссию при покупке
+    fee_reserve = execute_qty * config.FEE_RESERVE  # Берем 20% от суммы с запасом на комиссию при продаже (~200 ордеров)
 
-    if acc_money - sum_executed_qty > fee_reserve:
+    if acc_money > fee_reserve:
         execute_qty_c = execute_qty
         take_fee = "НЕТ"
     else:
@@ -87,7 +86,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     data_for_db = {
         'price': price,
-        'executed_qty': execute_qty,
+        'executed_qty': execute_qty,  # возможно заменить на order_data['executedQty']
         'cost': (cost := float(order_data['cummulativeQuoteQty']) if take_fee == "НЕТ" else price * execute_qty),
         'cost_with_fee': cost * (1 + config.TAKER_MAKER),  # 0.4% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
@@ -100,11 +99,10 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     logger.info(
         f'\n\nденьги: {acc_money}\n'
-        f'summary_executed_qty: {sum_executed_qty}\n'
-        f'acc_money - summary_executed_qty: {acc_money - sum_executed_qty}\n'
         f'Берем комиссию?: {take_fee}\n'
-        f'fee_reserve 10%: {fee_reserve}\n'
+        f'fee_reserve 20%: {fee_reserve}\n'
         f'decimal_places: {decimal_places}\n'
+        f'origQty==executedQty {order_data['executedQty'] == order_data['origQty']}\n'
         f'шаг {step_size}\n'
         f'execute_qty: {execute_qty}\n'
         f'execute_qty_c: {execute_qty_c}\n'
@@ -113,32 +111,33 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     return f'\n\nОрдер открыт {symbol}\n{text}\n{str(data)}\n'
 
 
-async def place_sell_order(symbol: str, summary_executed: float, session: AsyncSession, http_session: ClientSession,
-                           data: dict, open_time: datetime = None):
+async def place_sell_order(symbol: str, summary_executed: float, total_cost_with_fee: float, session: AsyncSession,
+                           http_session: ClientSession, open_times: list[datetime] = None):
     # Ордер на продажу по суммарной стоимости покупки монеты, напр 0.00011 BTC
-    order_data, text = await place_order(symbol, http_session, 'SELL', executed_qty=summary_executed)
+    order_data, text = await place_order(symbol, http_session, 'SELL', summary_executed)
     if not (order_data_ok := order_data.get("data")):
         report = f'\n\nПродажа не прошла: {text}\n{str(order_data)}\n\n'
         logger.error(report)
         return report
 
-    real_profit = float(order_data_ok["cummulativeQuoteQty"]) - data['total_cost_with_fee']
+    _, price = await  ws_price.get_price(symbol)
+    real_profit = float(order_data_ok["cummulativeQuoteQty"]) - total_cost_with_fee
 
     await so_manager.set_pause(symbol, True)
     await update_profit(symbol, session, real_profit)
     await so_manager.update_profit(symbol, real_profit)
 
-    await del_orders(symbol, session, open_time)
-    await so_manager.del_orders(symbol, open_time)
+    await del_orders(symbol, session, open_times)
+    await so_manager.del_orders(symbol, open_times)
 
     await session.commit()
 
     report = (f'\nРасчет моей программы:\n'
-              f'price: {data['price']}\n'
+              f'price: {price}\n'
               f'summary_executed: {summary_executed}\n'
-              f'Сумма в бирже price * summary_executed: {data['price'] * summary_executed}\n'
-              f'Сумма с комиссией total_cost_with_fee: {data['total_cost_with_fee']}\n'
-              f'Доход: {data['price'] * summary_executed - data['total_cost_with_fee']}\n\n'
+              f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
+              f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
+              f'Доход: {price * summary_executed - total_cost_with_fee}\n\n'
               f'Доход cummulativeQuoteQty: {real_profit}\n'
               f'\n\nОрдера закрыты {symbol}\n{text}\n{str(order_data_ok)}\n\n')
 
@@ -219,8 +218,7 @@ async def start_trading(symbol, **kwargs):
     http_session = kwargs.get('http_session')
     async_session_maker = kwargs.get('async_session_maker')
     target_profit = config.TARGET_PROFIT
-
-    # so_manager.pause_after_sell[symbol] = False
+    partly_target_profit = 0.001  # 0.1%
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
@@ -252,11 +250,37 @@ async def start_trading(symbol, **kwargs):
                 await profit_manager.update_data(symbol, profit_data)
 
                 if profit_to_target > 0:
-                    # Создаем ордер на продажу, с суммарной стоимостью покупки монеты
-                    await place_sell_order(symbol, summary_executed, session, http_session, profit_data)
+                    # Создаем ордер на продажу по всем ордерам, если доход > (1%) от суммы покупки
+                    await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
+
+                elif await so_manager.get_b_s_trigger(symbol) == 'sell':
+                    partly_cost_with_fee = 0
+                    partly_summary_executed = 0
+                    open_times = []
+
+                    for order in await so_manager.get_orders(symbol):
+                        profit = order['executed_qty'] * price
+                        # _________________________________  удалить
+                        # profit_text = order['executed_qty'] * price - order['cost_with_fee']
+                        # print(f'{profit_text}')
+
+                        if profit > order['cost_with_fee'] * (1 + partly_target_profit):
+                            partly_cost_with_fee += order['cost_with_fee']
+                            partly_summary_executed += order['executed_qty']
+                            open_times.append(order['open_time'])
+
+                    if partly_summary_executed:
+                        print(f'\n-----------------------\n')
+                        print(f'\n{partly_summary_executed}')
+                        print(f'{partly_cost_with_fee}')
+                        print(f'{open_times}')
+                        print(f'-----------------------\n')
+
+                        await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,
+                                               http_session, open_times=open_times)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
-            if state == 'track':
+            if state == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
                 if await so_manager.get_pause(symbol):
                     await sleep(5)  # Задержка перед покупкой
                     await so_manager.set_pause(symbol, False)

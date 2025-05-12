@@ -14,7 +14,7 @@ class ProfitManager:  # Класс для работы с данными про�
 
     async def get_data(self, symbol: str):
         async with self._lock:
-            return self._data[symbol]
+            return self._data.get(symbol)
 
 
 class AccountManager:  # Класс для работы с данными счета
@@ -76,11 +76,18 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
 
 
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
+    @staticmethod
+    def _create_default_symbol_data(step_size: float = 0.0):
+        return {'step_size': step_size,
+                'state': 'stop',
+                'pause_after_sell': False,
+                'b_s_trigger': 'new',
+                'profit': 0.0,
+                'orders': []}
+
     def __init__(self):
         self.symbols = []
-        self._data = defaultdict(
-            lambda: {'step_size': 0.0, 'state': 'stop', 'pause_after_sell': False, 'b_s_trigger': 'new', 'profit': 0.0,
-                     'orders': []})
+        self._data = defaultdict(self._create_default_symbol_data)
         self._lock = Lock()
 
     async def add_symbols_and_orders_batch(self, batch_data: list):
@@ -123,7 +130,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     async def add_symbol(self, symbol: str, step_size: float):
         async with self._lock:
             self.symbols.append(symbol)
-            self._data[symbol] = {'step_size': step_size, 'state': 'stop', 'profit': 0.0, 'orders': []}
+            self._data[symbol] = self._create_default_symbol_data(step_size=step_size)
 
     async def delete_symbol(self, symbol: str):
         async with self._lock:
@@ -156,10 +163,13 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
             orders = self._data.get(symbol).get('orders')
             return orders[-1] if orders else None
 
-    async def del_orders(self, symbol: str, open_time: datetime = None):  # Удаления одного / или всех ордеров в списке
+    async def del_orders(self, symbol: str, open_times: list[datetime] = None):
         async with self._lock:
-            if orders := self._data.get(symbol).get('orders'):
-                orders.pop() if open_time else orders.clear()
+            if open_times:
+                if orders := self._data.get(symbol).get('orders'):
+                    self._data[symbol]['orders'] = orders[:-len(open_times)]
+            else:
+                self._data.get(symbol).get('orders', []).clear()
 
     async def get_summary_executed_qty(self, symbol: str):  # Метод для подсчета объема исполненных ордеров
         async with self._lock:
