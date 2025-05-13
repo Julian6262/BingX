@@ -86,7 +86,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     data_for_db = {
         'price': price,
-        'executed_qty': execute_qty,  # возможно заменить на order_data['executedQty']
+        'executed_qty': float(order_data['executedQty']),
         'cost': (cost := float(order_data['cummulativeQuoteQty']) if take_fee == "НЕТ" else price * execute_qty),
         'cost_with_fee': cost * (1 + config.TAKER_MAKER),  # 0.4% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
@@ -218,7 +218,7 @@ async def start_trading(symbol, **kwargs):
     http_session = kwargs.get('http_session')
     async_session_maker = kwargs.get('async_session_maker')
     target_profit = config.TARGET_PROFIT
-    partly_target_profit = 0.001  # 0.1%
+    partly_target_profit = 0.002  # 0.2%
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
@@ -249,31 +249,37 @@ async def start_trading(symbol, **kwargs):
 
                 await profit_manager.update_data(symbol, profit_data)
 
+                # Создаем ордер на продажу по всем ордерам, если доход > (1%) от суммы покупки
                 if profit_to_target > 0:
-                    # Создаем ордер на продажу по всем ордерам, если доход > (1%) от суммы покупки
+                    print(f'\n-----------Полная продажа------------\n')
                     await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
 
+                # Создаем ордер на продажу частично, по ордерам с плюсом > (0.1%) от суммы покупки
                 elif await so_manager.get_b_s_trigger(symbol) == 'sell':
-                    partly_cost_with_fee = 0
-                    partly_summary_executed = 0
+                    partly_profit = 0.0
+                    partly_cost_with_fee_tp = 0.0
+                    partly_cost_with_fee = 0.0
+                    partly_summary_executed = 0.0
                     open_times = []
 
-                    for order in await so_manager.get_orders(symbol):
-                        profit = order['executed_qty'] * price
-                        # _________________________________  удалить
-                        # profit_text = order['executed_qty'] * price - order['cost_with_fee']
-                        # print(f'{profit_text}')
+                    for order in reversed(await so_manager.get_orders(symbol)):
+                        partly_profit += order['executed_qty'] * price
+                        partly_cost_with_fee_tp += order['cost_with_fee'] * (1 + partly_target_profit)
 
-                        if profit > order['cost_with_fee'] * (1 + partly_target_profit):
-                            partly_cost_with_fee += order['cost_with_fee']
+                        if partly_profit > partly_cost_with_fee_tp:
                             partly_summary_executed += order['executed_qty']
+                            partly_cost_with_fee += order['cost_with_fee']
                             open_times.append(order['open_time'])
+                        else:
+                            break
 
                     if partly_summary_executed:
-                        print(f'\n-----------------------\n')
-                        print(f'\n{partly_summary_executed}')
-                        print(f'{partly_cost_with_fee}')
-                        print(f'{open_times}')
+                        print(f'\n----------Частичная продажа-------------')
+                        print(f'price {price}')
+                        print(f'partly_summary_executed {partly_summary_executed}')
+                        print(f'partly_cost_with_fee {partly_cost_with_fee}')
+                        print(f'Доход {partly_summary_executed * price - partly_cost_with_fee}')
+                        print(f'open_times {open_times}')
                         print(f'-----------------------\n')
 
                         await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,

@@ -1,10 +1,8 @@
 from asyncio import sleep
 from collections import deque
-from datetime import timedelta, datetime
+from datetime import datetime
 from logging import getLogger
-
 from aiohttp import ClientSession
-
 import talib
 import numpy as np
 
@@ -47,14 +45,14 @@ async def start_indicator(symbol: str, http_session: ClientSession, interval, li
                 await so_manager.set_b_s_trigger(symbol, 'buy')
                 # -----------------------------------------------
                 if symbol == 'ADA':
-                    print(f'\nПокупаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}')
-                    print(f'{hist[-7:]}\n')
+                    print(f'\nПокупаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}\n')
+                    # print(f'{hist[-7:]}\n')
 
             elif hist[-2] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'sell')
                 # -----------------------------------------------
                 if symbol == 'ADA':
-                    print(f'\nПродаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}')
-                    print(f'{hist[-7:]}\n')
+                    print(f'\nПродаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}\n')
+                    # print(f'{hist[-7:]}\n')
 
         await sleep(0.05)
