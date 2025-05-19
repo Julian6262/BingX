@@ -42,17 +42,11 @@ async def start_indicator(symbol: str, http_session: ClientSession, interval, li
             _, _, hist = talib.MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
 
             if hist[-2] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
+                print(f'\nПокупаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}\n')
                 await so_manager.set_b_s_trigger(symbol, 'buy')
-                # -----------------------------------------------
-                if symbol == 'ADA':
-                    print(f'\nПокупаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}\n')
-                    # print(f'{hist[-7:]}\n')
 
             elif hist[-2] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
+                print(f'\nПродаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}\n')
                 await so_manager.set_b_s_trigger(symbol, 'sell')
-                # -----------------------------------------------
-                if symbol == 'ADA':
-                    print(f'\nПродаем {symbol}, {datetime.fromtimestamp(time_now / 1000)}\n')
-                    # print(f'{hist[-7:]}\n')
 
         await sleep(0.05)

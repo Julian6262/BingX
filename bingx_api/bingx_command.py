@@ -4,7 +4,7 @@ from decimal import Decimal
 from gzip import decompress
 from time import time
 
-from aiohttp import ClientSession, WSMsgType
+from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 from logging import getLogger
 from json import loads
@@ -60,9 +60,18 @@ async def manage_listen_key(http_session: ClientSession):
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    if (usdt_balance := await account_manager.get_balance('USDT')) < config.ACCOUNT_BALANCE:
-        # return f'Баланс слишком маленький: {usdt_balance}'
-        return None
+    if await account_manager.get_balance('USDT') > config.QUANTITY:
+        await account_manager.set_usdt_block('unblock')
+
+    report = f'Баланс слишком маленький: {await account_manager.get_balance('USDT')}'
+
+    if (usdt_block := await account_manager.get_usdt_block()) == 'block':
+        await account_manager.set_usdt_block('continue_block')
+        logger.error(report)
+        return report
+
+    elif usdt_block == 'continue_block':
+        return report
 
     acc_money = await account_manager.get_balance(symbol)
     step_size = await so_manager.get_step_size(symbol)
@@ -82,11 +91,16 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty_c)
     if not (order_data := data.get("data")):
-        return f'\n\nОрдер НЕ открыт {symbol}: {text}\n'
+        if data["code"] == 100202:
+            await account_manager.set_usdt_block('block')
+
+        report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'
+        logger.error(report)
+        return report
 
     data_for_db = {
         'price': price,
-        'executed_qty': float(order_data['executedQty']),
+        'executed_qty': float(order_data['executedQty']) if take_fee == "НЕТ" else execute_qty,
         'cost': (cost := float(order_data['cummulativeQuoteQty']) if take_fee == "НЕТ" else price * execute_qty),
         'cost_with_fee': cost * (1 + config.TAKER_MAKER),  # 0.4% комиссия(на бирже 0.1% + 0.1%)
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
@@ -97,18 +111,18 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         so_manager.update_order(symbol, data_for_db),  # Добавить ордер в память
     )
 
-    logger.info(
-        f'\n\nденьги: {acc_money}\n'
-        f'Берем комиссию?: {take_fee}\n'
-        f'fee_reserve 20%: {fee_reserve}\n'
-        f'decimal_places: {decimal_places}\n'
-        f'origQty==executedQty {order_data['executedQty'] == order_data['origQty']}\n'
-        f'шаг {step_size}\n'
-        f'execute_qty: {execute_qty}\n'
-        f'execute_qty_c: {execute_qty_c}\n'
-    )
+    report = (f'\n\nденьги: {acc_money}\n'
+              f'Берем комиссию?: {take_fee}\n'
+              f'fee_reserve 20%: {fee_reserve}\n'
+              f'decimal_places: {decimal_places}\n'
+              f'origQty==executedQty {order_data['executedQty'] == order_data['origQty']}\n'
+              f'шаг {step_size}\n'
+              f'execute_qty: {execute_qty}\n'
+              f'execute_qty_c: {execute_qty_c}\n'
+              f'\nОрдер открыт {symbol}\n{text}\n{str(data)}\n')
 
-    return f'\n\nОрдер открыт {symbol}\n{text}\n{str(data)}\n'
+    logger.info(report)
+    return report
 
 
 async def place_sell_order(symbol: str, summary_executed: float, total_cost_with_fee: float, session: AsyncSession,
@@ -132,14 +146,14 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
 
     await session.commit()
 
-    report = (f'\nРасчет моей программы:\n'
+    report = (f'\n\nРасчет моей программы:\n'
               f'price: {price}\n'
               f'summary_executed: {summary_executed}\n'
               f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
               f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
-              f'Доход: {price * summary_executed - total_cost_with_fee}\n\n'
+              f'Доход: {price * summary_executed - total_cost_with_fee}\n'
               f'Доход cummulativeQuoteQty: {real_profit}\n'
-              f'\n\nОрдера закрыты {symbol}\n{text}\n{str(order_data_ok)}\n\n')
+              f'\nОрдера закрыты {symbol}\n{text}\n{str(order_data_ok)}\n')
 
     logger.info(report)
     return report
@@ -165,7 +179,7 @@ async def account_upd_ws(http_session: ClientSession):
                             logger.info(f"Account_upd_ws: {data['a']}")
 
                     except Exception as e:
-                        logger.error(f"Другая Ошибка account_upd_ws: {e}, сообщение: {message.data}")
+                        logger.error(f"Непредвиденная ошибка account_upd_ws: {e}, сообщение: {message.data}")
 
         except Exception as e:
             logger.error(f"Критическая ошибка account_upd_ws: {e}")
@@ -182,28 +196,19 @@ async def price_upd_ws(symbol, **kwargs):
     channel = {"id": '1', "reqType": "sub", "dataType": f"{symbol}-USDT@lastPrice"}
     await sleep(seconds)  # Задержка перед запуском функции, иначе ошибка API
 
-    while True:  # Цикл для повторного подключения
+    while True:
         try:
             async with http_session.ws_connect(config.URL_WS) as ws:
                 logger.info(f"WebSocket connected price_upd_ws for {symbol}")
                 await ws.send_json(channel)
 
                 async for message in ws:
-                    if ws.closed:
-                        logger.warning(f"Соединение WebSocket закрыто {symbol}")
-                        break
+                    try:
+                        if 'data' in (data := loads(decompress(message.data).decode())):
+                            await ws_price.update_price(symbol, int(time() * 1000), float(data["data"]["c"]))
 
-                    if message.type in (WSMsgType.TEXT, WSMsgType.BINARY):  # Проверка типа сообщения.
-                        try:
-                            if 'data' in (data := loads(decompress(message.data).decode())):
-                                await ws_price.update_price(symbol, int(time() * 1000), float(data["data"]["c"]))
-
-                        except Exception as e:
-                            logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message.data}")
-
-                    else:  # Обработка всех остальных типов сообщений
-                        logger.error(f"Неизвестный тип сообщения WebSocket: {message.type}, данные: {message.data}")
-                        break
+                    except Exception as e:
+                        logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message.data}")
 
         except Exception as e:
             logger.error(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
@@ -218,7 +223,7 @@ async def start_trading(symbol, **kwargs):
     http_session = kwargs.get('http_session')
     async_session_maker = kwargs.get('async_session_maker')
     target_profit = config.TARGET_PROFIT
-    partly_target_profit = 0.002  # 0.2%
+    partly_target_profit = 0.004  # 0.4%
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
@@ -230,8 +235,8 @@ async def start_trading(symbol, **kwargs):
             _, price = await ws_price.get_price(symbol)
             state = await so_manager.get_state(symbol)
 
-            if summary_executed := await so_manager.get_summary_executed_qty(symbol):
-                total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
+            if summary_executed := await so_manager.get_summary(symbol, 'executed_qty'):
+                total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
                 total_cost_with_fee_tp = total_cost_with_fee * (1 + target_profit)
                 current_profit = price * summary_executed - total_cost_with_fee
                 profit_to_target = price * summary_executed - total_cost_with_fee_tp
@@ -249,12 +254,12 @@ async def start_trading(symbol, **kwargs):
 
                 await profit_manager.update_data(symbol, profit_data)
 
-                # Создаем ордер на продажу по всем ордерам, если доход > (1%) от суммы покупки
+                # Создаем ордер на продажу по всем ордерам, если доход > 1%
                 if profit_to_target > 0:
                     print(f'\n-----------Полная продажа------------\n')
                     await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
 
-                # Создаем ордер на продажу частично, по ордерам с плюсом > (0.1%) от суммы покупки
+                # Создаем ордер на продажу частично, сумма ордеров > 0.2%
                 elif await so_manager.get_b_s_trigger(symbol) == 'sell':
                     partly_profit = 0.0
                     partly_cost_with_fee_tp = 0.0
@@ -295,12 +300,10 @@ async def start_trading(symbol, **kwargs):
                     next_price = last_order['price'] * (1 - config.GRID_STEP)
 
                     if price < next_price:
-                        if response := await place_buy_order(symbol, price, session, http_session):
-                            logger.info(response)
+                        await place_buy_order(symbol, price, session, http_session)
 
                 else:  # Если нет последнего ордера, то покупаем сразу
-                    if response := await place_buy_order(symbol, price, session, http_session):
-                        logger.info(response)
+                    await place_buy_order(symbol, price, session, http_session)
 
             await sleep(0.05)
 

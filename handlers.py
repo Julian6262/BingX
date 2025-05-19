@@ -83,12 +83,11 @@ async def buy_order_cmd(message: Message, session: AsyncSession, http_session: C
     if (symbol := message.text[2:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
 
-    _, price = await ws_price.get_price(symbol)
-    if price is None:
+    if (price_data := await ws_price.get_price(symbol)) is None:
         return await message.answer('Цена не готова')
 
-    response = await place_buy_order(symbol, price, session, http_session)
-    await message.answer(response)
+    report = await place_buy_order(symbol, price_data[1], session, http_session)
+    await message.answer(report)
 
 
 @router.message(F.text.startswith('s_all_'))  # Продажа всех ордеров
@@ -96,13 +95,12 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
     if (symbol := message.text[6:].upper()) not in so_manager.symbols:
         return await message.answer('Не такой символ')
 
-    if (summary_executed := await so_manager.get_summary_executed_qty(symbol)) is None:
+    if (summary_executed := await so_manager.get_summary(symbol, 'executed_qty')) is None:
         return await message.answer('Нет открытых ордеров')
 
     total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
 
     report = await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
-
     await message.answer(report)
 
 
@@ -116,7 +114,6 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
 
     report = await place_sell_order(symbol, order_data['executed_qty'], order_data['cost_with_fee'], session,
                                     http_session, open_times=[order_data['open_time']])
-
     await message.answer(report)
 
 

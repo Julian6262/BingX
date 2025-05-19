@@ -20,6 +20,7 @@ class ProfitManager:  # Класс для работы с данными про�
 class AccountManager:  # Класс для работы с данными счета
     def __init__(self):
         self._balance = {}
+        self._usdt_block = 'unblock'
         self._listen_key = None
         self._lock = Lock()
 
@@ -39,6 +40,14 @@ class AccountManager:  # Класс для работы с данными сче
     async def get_listen_key(self):
         async with self._lock:
             return self._listen_key
+
+    async def set_usdt_block(self, state: str):
+        async with self._lock:
+            self._usdt_block = state
+
+    async def get_usdt_block(self):
+        async with self._lock:
+            return self._usdt_block
 
 
 class TaskManager:  # Класс для работы с задачами
@@ -76,6 +85,11 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
 
 
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
+    def __init__(self):
+        self.symbols = []
+        self._data = defaultdict(self._create_default_symbol_data)
+        self._lock = Lock()
+
     @staticmethod
     def _create_default_symbol_data(step_size: float = 0.0):
         return {'step_size': step_size,
@@ -84,11 +98,6 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 'b_s_trigger': 'new',
                 'profit': 0.0,
                 'orders': []}
-
-    def __init__(self):
-        self.symbols = []
-        self._data = defaultdict(self._create_default_symbol_data)
-        self._lock = Lock()
 
     async def add_symbols_and_orders_batch(self, batch_data: list):
         async with self._lock:
@@ -171,12 +180,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
             else:
                 self._data.get(symbol).get('orders', []).clear()
 
-    async def get_summary_executed_qty(self, symbol: str):  # Метод для подсчета объема исполненных ордеров
+    async def get_summary(self, symbol: str, key: str):
         async with self._lock:
             orders = self._data.get(symbol).get('orders')
-            return sum(order['executed_qty'] for order in orders) if orders else 0.0
-
-    async def get_total_cost_with_fee(self, symbol: str):  # Метод для подсчета общей стоимости с комиссией
-        async with self._lock:
-            orders = self._data.get(symbol).get('orders')
-            return sum(order['cost_with_fee'] for order in orders) if orders else 0.0
+            return sum(order[key] for order in orders) if orders else 0.0
