@@ -5,7 +5,7 @@ from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from database.models import OrderInfo, Symbol
+from database.models import OrderInfo, Symbol, SymbolConfig
 
 logger = getLogger('my_app')
 
@@ -40,12 +40,15 @@ async def update_profit(symbol: str, session: AsyncSession, profit_diff: float):
 
 
 # Загружаем все ордера и symbols из БД в память
-async def load_from_db(session: AsyncSession, so_manager):
+async def load_from_db(session: AsyncSession, so_manager, config_manager):
     query = select(Symbol).options(selectinload(Symbol.orders))
     symbols = (await session.execute(query)).scalars().all()
-
     data_batch = [(symbol, [order.__dict__ for order in symbol.orders]) for symbol in symbols]
-    await so_manager.add_symbols_and_orders_batch(data_batch)
+    await so_manager.add_symbols_and_orders(data_batch)
+
+    symbols_config = (await session.execute(select(SymbolConfig))).scalars().all()
+    data_batch = [symbol_config for symbol_config in symbols_config]
+    await config_manager.update_config(data_batch)
 
 
 # Добавить символ в БД

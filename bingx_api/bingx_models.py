@@ -3,6 +3,24 @@ from collections import defaultdict
 from datetime import datetime
 
 
+class ConfigManager:
+    def __init__(self):
+        self.symbols = []
+        self._data = defaultdict(dict)
+        self._lock = Lock()
+
+    async def update_config(self, batch_data: dict):
+        async with self._lock:
+            for data in batch_data:
+                self.symbols.append(data.symbol_name)
+                self._data[data.symbol_name]['grid_size'] = data.grid_size
+                self._data[data.symbol_name]['lot'] = data.lot
+
+    async def get_config(self, symbol: str, field: str):
+        async with self._lock:
+            return self._data.get(symbol).get(field)
+
+
 class ProfitManager:  # Класс для работы с данными профита
     def __init__(self):
         self._data = {}
@@ -99,7 +117,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 'profit': 0.0,
                 'orders': []}
 
-    async def add_symbols_and_orders_batch(self, batch_data: list):
+    async def add_symbols_and_orders(self, batch_data: list):
         async with self._lock:
             for symbol, orders in batch_data:
                 self.symbols.append(symbol.name)

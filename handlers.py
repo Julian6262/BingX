@@ -6,7 +6,7 @@ from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bingx_api.bingx_command import price_upd_ws, get_symbol_info, start_trading, place_buy_order, so_manager, ws_price, \
-    task_manager, place_sell_order, profit_manager
+    task_manager, place_sell_order, profit_manager, config_manager
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
@@ -119,7 +119,7 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
 
 @router.message(F.text.startswith('add_'))  # Добавить символ в БД
 async def add_symbol_cmd(message: Message, session: AsyncSession, http_session: ClientSession):
-    if (symbol := message.text[4:].upper()) not in config.SYMBOLS:
+    if (symbol := message.text[4:].upper()) not in config_manager.symbols:
         return await message.answer('Не такой символ')
 
     if symbol in so_manager.symbols:

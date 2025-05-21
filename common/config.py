@@ -13,13 +13,10 @@ class Config:
         self.TOKEN: str = getenv('TOKEN')
         self.DB_URL: str = getenv('DB_URL')
         self.ADMIN: str = getenv('ADMIN')
-        self.SYMBOLS: tuple = ('BTC', 'BNB', 'SOL', 'ETH', 'XRP', 'ADA', 'LTC', 'LINK', 'TRX')
         self.HEADERS: dict = {'X-BX-APIKEY': self.API_KEY}
 
-        self.GRID_STEP: float = 0.01  # в долях (1%)
         self.TARGET_PROFIT: float = 0.01  # в долях (1%)
         self.ACCOUNT_BALANCE: float = 2  # в долларах, ниже этого баланса не будет работать бот
-        self.QUANTITY: float = 2  # в долларах
         self.TAKER: float = 0.002  # в долях (0.2%)
         self.MAKER: float = 0.002  # в долях (0.2%)
 

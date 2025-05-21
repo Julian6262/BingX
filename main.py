@@ -5,12 +5,13 @@ from aiogram import Bot, Dispatcher
 from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, so_manager, start_trading
 from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db
 from handlers import router
 from indicators.indicator_models import start_indicator
+from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, so_manager, start_trading, \
+    config_manager
 
 from middlewares.db import DataBaseSession
 from middlewares.http import HttpSession
@@ -44,28 +45,27 @@ dp.include_router(router)
 
 async def main():
     engine = create_async_engine(config.DB_URL, echo=True)
-    async_session_maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async_session = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     connector = TCPConnector(limit=200, keepalive_timeout=30)
     timeout = ClientTimeout(total=60, connect=10, sock_read=30)
 
-    dp.update.middleware(DataBaseSession(session_pool=async_session_maker)),
+    dp.update.middleware(DataBaseSession(session_pool=async_session)),
 
     async with ClientSession(headers=config.HEADERS, connector=connector, timeout=timeout) as http_session:
         dp.update.middleware(HttpSession(session=http_session)),
 
-        async with async_session_maker() as session:
+        async with async_session() as session:
             await init_db(engine)
-            await load_from_db(session, so_manager)
+            await load_from_db(session, so_manager, config_manager)
 
+        symbols = so_manager.symbols
         tasks = (
             manage_listen_key(http_session),
             account_upd_ws(http_session),
-            *(start_indicator(symbol, http_session=http_session, interval='1m') for symbol in so_manager.symbols),
-            *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in
-              enumerate(so_manager.symbols)),
-            *(start_trading(symbol, http_session=http_session, async_session_maker=async_session_maker) for symbol in
-              so_manager.symbols),
+            *(start_indicator(symbol, http_session=http_session, interval='1m') for symbol in symbols),
+            *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in enumerate(symbols)),
+            *(start_trading(symbol, http_session=http_session, async_session=async_session) for symbol in symbols),
 
             # bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats()),
             # bot.set_my_commands(commands=private, scope=BotCommandScopeAllPrivateChats()),

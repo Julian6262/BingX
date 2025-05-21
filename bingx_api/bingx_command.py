@@ -10,7 +10,8 @@ from logging import getLogger
 from json import loads
 
 from bingx_api.api_client import send_request
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager, \
+    ConfigManager
 from common.config import config
 from common.func import get_decimal_places, add_task
 from database.orm_query import add_order, update_profit, del_orders
@@ -22,6 +23,7 @@ so_manager = SymbolOrderManager()
 account_manager = AccountManager()
 task_manager = TaskManager()
 profit_manager = ProfitManager()
+config_manager = ConfigManager()
 
 
 async def get_candlestick_data(symbol: str, session: ClientSession, interval: str, limit: int):
@@ -60,10 +62,11 @@ async def manage_listen_key(http_session: ClientSession):
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    if await account_manager.get_balance('USDT') > config.QUANTITY:
-        await account_manager.set_usdt_block('unblock')
-
+    lot = await config_manager.get_config(symbol, 'lot')
     report = f'Баланс слишком маленький: {await account_manager.get_balance('USDT')}'
+
+    if await account_manager.get_balance('USDT') > lot:
+        await account_manager.set_usdt_block('unblock')
 
     if (usdt_block := await account_manager.get_usdt_block()) == 'block':
         await account_manager.set_usdt_block('continue_block')
@@ -75,7 +78,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     acc_money = await account_manager.get_balance(symbol)
     step_size = await so_manager.get_step_size(symbol)
-    execute_qty = config.QUANTITY / price
+    execute_qty = lot / price
     fee_reserve = execute_qty * config.FEE_RESERVE  # Берем 20% от суммы с запасом на комиссию при продаже (~200 ордеров)
 
     if acc_money > fee_reserve:
@@ -161,7 +164,7 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
 
 async def account_upd_ws(http_session: ClientSession):
     while not (listen_key := await account_manager.get_listen_key()):
-        await sleep(0.5)  # Задержка перед попыткой получения ключа
+        await sleep(0.3)  # Задержка перед попыткой получения ключа
 
     channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}
     url = f"{config.URL_WS}?listenKey={listen_key}"
@@ -221,13 +224,13 @@ async def price_upd_ws(symbol, **kwargs):
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
-    async_session_maker = kwargs.get('async_session_maker')
+    async_session = kwargs.get('async_session')
     target_profit = config.TARGET_PROFIT
     partly_target_profit = 0.004  # 0.4%
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
-            await sleep(0.5)  # Задержка перед попыткой получения цены
+            await sleep(0.3)  # Задержка перед попыткой получения цены
 
         logger.info(f'Запуск торговли {symbol}')
 
@@ -259,7 +262,7 @@ async def start_trading(symbol, **kwargs):
                     print(f'\n-----------Полная продажа------------\n')
                     await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
 
-                # Создаем ордер на продажу частично, сумма ордеров > 0.2%
+                # Создаем ордер на продажу частично, сумма ордеров > 0.4%
                 elif await so_manager.get_b_s_trigger(symbol) == 'sell':
                     partly_profit = 0.0
                     partly_cost_with_fee_tp = 0.0
@@ -297,7 +300,7 @@ async def start_trading(symbol, **kwargs):
                     await so_manager.set_pause(symbol, False)
 
                 if last_order := await so_manager.get_last_order(symbol):
-                    next_price = last_order['price'] * (1 - config.GRID_STEP)
+                    next_price = last_order['price'] * (1 - await config_manager.get_config(symbol, 'grid_size'))
 
                     if price < next_price:
                         await place_buy_order(symbol, price, session, http_session)
@@ -308,7 +311,7 @@ async def start_trading(symbol, **kwargs):
             await sleep(0.05)
 
     if session is None:  # Сессия не передана, создаем новый async_session_maker
-        async with async_session_maker() as session:
+        async with async_session() as session:
             await trading_logic()
     else:  # Сессия передана, используем ее (используется в хэндлерах)
         await trading_logic()
