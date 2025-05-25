@@ -10,7 +10,7 @@ from bingx_api.bingx_command import price_upd_ws, get_symbol_info, start_trading
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
-from indicators.indicator_models import start_indicator
+from indicators.indicator_models import start_indicators
 
 router = Router()
 router.message.filter(IsAdmin(config.ADMIN))  # Фильтр по ID, кто может пользоваться ботом
@@ -39,7 +39,7 @@ async def set_state_cmd(message: Message, session: AsyncSession, http_session: C
         await gather(
             price_upd_ws(symbol, http_session=http_session),
             start_trading(symbol, session=session, http_session=http_session),
-            start_indicator(symbol, http_session=http_session, interval='1m')
+            start_indicators(symbol, http_session=http_session, interval='1m')
         )
 
     await message.answer(f"Статус монеты {symbol} изменен c {state_old} на {state_new}")

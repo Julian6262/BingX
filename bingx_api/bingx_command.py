@@ -3,18 +3,19 @@ from datetime import datetime
 from decimal import Decimal
 from gzip import decompress
 from time import time
+from hmac import new as hmac_new
+from hashlib import sha256
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientConnectorError
 from sqlalchemy.ext.asyncio import AsyncSession
 from logging import getLogger
-from json import loads
+from json import loads, JSONDecodeError
 
-from bingx_api.api_client import send_request
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager, \
-    ConfigManager
 from common.config import config
 from common.func import get_decimal_places, add_task
 from database.orm_query import add_order, update_profit, del_orders
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager, \
+    ConfigManager
 
 logger = getLogger('my_app')
 
@@ -26,31 +27,62 @@ profit_manager = ProfitManager()
 config_manager = ConfigManager()
 
 
+async def _send_request(method: str, session: ClientSession, endpoint: str, params: dict):
+    params['timestamp'] = int(time() * 1000)
+    params_str = "&".join([f"{x}={params[x]}" for x in sorted(params)])
+    sign = hmac_new(config.SECRET_KEY.encode(), params_str.encode(), sha256).hexdigest()
+    url = f"{config.BASE_URL}{endpoint}?{params_str}&signature={sign}"
+
+    try:
+        async with session.request(method, url) as response:
+            if response.status == 200:
+                if response.content_type == 'application/json':
+                    data = await response.json()
+                elif response.content_type == 'text/plain':
+                    data = loads(await response.text())
+                else:
+                    return None, f"Неожиданный Content-Type send_request: {response.content_type}"
+
+                return data, "OK"
+
+            else:
+                return None, f"Ошибка {response.status} для {params.get('symbol')}: {await response.text()}"
+
+    except ClientConnectorError as e:
+        return None, f'Ошибка соединения с сетью (send_request): {e}'
+
+    except JSONDecodeError as e:
+        return None, f"Ошибка декодирования send_request JSON: {e}"
+
+    except Exception as e:
+        return None, f"Ошибка при выполнении запроса send_request: {e}"
+
+
 async def get_candlestick_data(symbol: str, session: ClientSession, interval: str, limit: int):
     endpoint = '/openApi/spot/v2/market/kline'
     params = {"symbol": f'{symbol}-USDT', "interval": interval, "limit": limit}
 
-    return await send_request("GET", session, endpoint, params)
+    return await _send_request("GET", session, endpoint, params)
 
 
 async def place_order(symbol: str, session: ClientSession, side: str, executed_qty: float | Decimal):
     endpoint = '/openApi/spot/v1/trade/order'
     params = {"symbol": f'{symbol}-USDT', "type": "MARKET", "side": side, "quantity": executed_qty}
 
-    return await send_request("POST", session, endpoint, params)
+    return await _send_request("POST", session, endpoint, params)
 
 
 async def get_symbol_info(symbol: str, session: ClientSession):
     endpoint = '/openApi/spot/v1/common/symbols'
     params = {"symbol": f'{symbol}-USDT'}
 
-    return await send_request("GET", session, endpoint, params)
+    return await _send_request("GET", session, endpoint, params)
 
 
 async def manage_listen_key(http_session: ClientSession):
     endpoint = '/openApi/user/auth/userDataStream'
 
-    listen_key, text = await send_request("POST", http_session, endpoint, {})
+    listen_key, text = await _send_request("POST", http_session, endpoint, {})
     if listen_key is None:
         logger.error(f'Ошибка получения listen_key: {text}')
         return
@@ -58,7 +90,7 @@ async def manage_listen_key(http_session: ClientSession):
     await account_manager.add_listen_key(listen_key['listenKey'])
     while True:
         await sleep(1200)
-        await send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
+        await _send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
@@ -228,7 +260,7 @@ async def start_trading(symbol, **kwargs):
     target_profit = config.TARGET_PROFIT
     partly_target_profit = 0.004  # 0.4%
 
-    async def trading_logic():
+    async def _trading_logic():
         while not await ws_price.get_price(symbol):
             await sleep(0.3)  # Задержка перед попыткой получения цены
 
@@ -312,6 +344,6 @@ async def start_trading(symbol, **kwargs):
 
     if session is None:  # Сессия не передана, создаем новый async_session_maker
         async with async_session() as session:
-            await trading_logic()
+            await _trading_logic()
     else:  # Сессия передана, используем ее (используется в хэндлерах)
-        await trading_logic()
+        await _trading_logic()

@@ -9,7 +9,7 @@ from common.config import config
 from database.db_utils import init_db
 from database.orm_query import load_from_db
 from handlers import router
-from indicators.indicator_models import start_indicator
+from indicators.indicator_models import start_indicators
 from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, so_manager, start_trading, \
     config_manager
 
@@ -63,7 +63,7 @@ async def main():
         tasks = (
             manage_listen_key(http_session),
             account_upd_ws(http_session),
-            *(start_indicator(symbol, http_session=http_session, interval='1m') for symbol in symbols),
+            *(start_indicators(symbol, http_session=http_session) for symbol in symbols),
             *(price_upd_ws(symbol, http_session=http_session, seconds=i) for i, symbol in enumerate(symbols)),
             *(start_trading(symbol, http_session=http_session, async_session=async_session) for symbol in symbols),
 
