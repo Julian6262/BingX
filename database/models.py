@@ -16,7 +16,7 @@ class SymbolConfig(Base):
 
     symbol_name: Mapped[str] = mapped_column(String(10), unique=True)
     grid_size: Mapped[float] = mapped_column(Float, default=0.01)
-    lot: Mapped[float] = mapped_column(Float, default=2.0)
+    # lot: Mapped[float] = mapped_column(Float, default=2.0)
 
 
 class Symbol(Base):

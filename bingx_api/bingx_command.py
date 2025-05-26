@@ -93,19 +93,33 @@ async def manage_listen_key(http_session: ClientSession):
         await _send_request("PUT", http_session, endpoint, {"listenKey": listen_key['listenKey']})
 
 
-async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    lot = await config_manager.get_config(symbol, 'lot')
-    report = f'Баланс слишком маленький: {await account_manager.get_balance('USDT')}'
+async def _check_usdt_balance(lot: float):
+    usdt_block = await account_manager.get_usdt_block()
+    usdt_balance = await account_manager.get_balance('USDT')
+    report = f'\nБаланс слишком маленький: {usdt_balance}\n'
 
-    if await account_manager.get_balance('USDT') > lot:
+    if usdt_balance > lot and usdt_block in ('block', 'continue_block'):
+        logger.warning(f'\nБаланс пополнился: {usdt_balance}\n')
         await account_manager.set_usdt_block('unblock')
 
-    if (usdt_block := await account_manager.get_usdt_block()) == 'block':
+    if usdt_block == 'block':
         await account_manager.set_usdt_block('continue_block')
-        logger.error(report)
+        logger.warning(report)
         return report
 
     elif usdt_block == 'continue_block':
+        return report
+
+    return None
+
+
+async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
+    if not (lot := await so_manager.get_lot(symbol)):
+        report = f'\nНе удалось получить лот для {symbol}\n'
+        logger.warning(report)
+        return report
+
+    if report := await _check_usdt_balance(lot):
         return report
 
     acc_money = await account_manager.get_balance(symbol)
@@ -126,7 +140,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty_c)
     if not (order_data := data.get("data")):
-        if data["code"] == 100202:
+        if data["code"] == 100202:  # Если ответ от биржи 100202, то нехватает средств, блокируем покупки
             await account_manager.set_usdt_block('block')
 
         report = f'\n\nОрдер НЕ открыт {symbol}: {text} {data}\n'

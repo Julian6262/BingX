@@ -14,7 +14,7 @@ class ConfigManager:
             for data in batch_data:
                 self.symbols.append(data.symbol_name)
                 self._data[data.symbol_name]['grid_size'] = data.grid_size
-                self._data[data.symbol_name]['lot'] = data.lot
+                # self._data[data.symbol_name]['lot'] = data.lot
 
     async def get_config(self, symbol: str, field: str):
         async with self._lock:
@@ -115,6 +115,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 'pause_after_sell': False,
                 'b_s_trigger': 'new',
                 'profit': 0.0,
+                'lot': 0.0,
                 'orders': []}
 
     async def add_symbols_and_orders(self, batch_data: list):
@@ -141,6 +142,14 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     async def get_pause(self, symbol: str):
         async with self._lock:
             return self._data.get(symbol).get('pause_after_sell')
+
+    async def set_lot(self, symbol: str, lot: float):
+        async with self._lock:
+            self._data[symbol]['lot'] = lot
+
+    async def get_lot(self, symbol: str):
+        async with self._lock:
+            return self._data.get(symbol).get('lot')
 
     async def update_state(self, symbol: str, state: str):
         async with self._lock:
