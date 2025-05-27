@@ -8,7 +8,7 @@ from aiohttp import ClientSession
 import talib
 import numpy as np
 
-from bingx_api.bingx_command import get_candlestick_data, ws_price, so_manager, task_manager
+from bingx_api.bingx_command import get_candlestick_data, ws_price, so_manager, task_manager, config_manager
 from common.func import add_task
 
 logger = getLogger('my_app')
@@ -31,7 +31,7 @@ async def _get_initial_close_prices(symbol: str, http_session: ClientSession, in
     return delta, next_candle_time, deque(close_prices, maxlen=limit)
 
 
-async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logic_name: str):
+async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logic_name: str, rsi_lot_map: dict = None):
     close_prices = np.array(close_prices_deque, dtype=float)
 
     match logic_name:
@@ -49,34 +49,6 @@ async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logi
         case 'rsi_4h':
             rsi = talib.RSI(close_prices, timeperiod=14)[-1]
             lot = await so_manager.get_lot(symbol)
-
-            # if rsi < 30 and lot != 20:
-            #     await so_manager.set_lot(symbol, 20)
-            #     print(f'rsi {rsi}, lot {symbol} = {await so_manager.get_lot(symbol)}\n')
-            # elif 30 <= rsi < 40 and lot != 15:
-            #     await so_manager.set_lot(symbol, 15)
-            #     print(f'rsi {rsi}, lot {symbol} = {await so_manager.get_lot(symbol)}\n')
-            # elif 40 <= rsi < 50 and lot != 10:
-            #     await so_manager.set_lot(symbol, 10)
-            #     print(f'rsi {rsi}, lot {symbol} = {await so_manager.get_lot(symbol)}\n')
-            # elif 50 <= rsi < 60 and lot != 7.5:
-            #     await so_manager.set_lot(symbol, 7.5)
-            #     print(f'rsi {rsi}, lot {symbol} = {await so_manager.get_lot(symbol)}\n')
-            # elif 60 <= rsi < 70 and lot != 5:
-            #     await so_manager.set_lot(symbol, 5)
-            #     print(f'rsi {rsi}, lot {symbol} = {await so_manager.get_lot(symbol)}\n')
-            # elif 70 <= rsi and lot != 2:
-            #     await so_manager.set_lot(symbol, 2)
-            #     print(f'rsi {rsi}, lot {symbol} = {await so_manager.get_lot(symbol)}\n')
-
-            rsi_lot_map = {
-                (-float('inf'), 30): 20,
-                (30, 40): 15,
-                (40, 50): 10,
-                (50, 60): 7.5,
-                (60, 70): 5,
-                (70, float('inf')): 2,
-            }
 
             for (rsi_min, rsi_max), target_lot in rsi_lot_map.items():
                 if rsi_min <= rsi < rsi_max and lot != target_lot:
@@ -101,8 +73,21 @@ async def start_indicators(symbol: str, http_session: ClientSession):
 
     logger.info(f'Запуск start_indicators {symbol}')
 
+    symbol_lot = await config_manager.get_config(symbol, 'lot')
+    rsi_lot_map = {
+        (-float('inf'), 20): symbol_lot * 3,
+        (20, 25): symbol_lot * 2.5,
+        (25, 30): symbol_lot * 2,
+        (30, 40): symbol_lot * 1.5,
+        (40, 50): symbol_lot,
+        (50, 60): symbol_lot * 0.75,
+        (60, 65): symbol_lot * 0.5,
+        (65, 70): symbol_lot * 0.35,
+        (70, float('inf')): 2,
+    }
+
     await _process_indicators_logic(symbol, close_prices_deque_1m, 'macd_1m')
-    await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h')  # инициализация лотов
+    await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', rsi_lot_map)
 
     while True:
         time_now, price = await ws_price.get_price(symbol)
@@ -118,6 +103,6 @@ async def start_indicators(symbol: str, http_session: ClientSession):
             close_prices_deque_4h.append(price)
             next_candle_time_4h += delta_4h
         if await so_manager.get_b_s_trigger(symbol) == 'buy':  # вызываем индикатор rsi_4h только если покупаем
-            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h')
+            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', rsi_lot_map)
 
-        await sleep(0.05)
+        await sleep(1)

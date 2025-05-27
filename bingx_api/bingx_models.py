@@ -14,7 +14,7 @@ class ConfigManager:
             for data in batch_data:
                 self.symbols.append(data.symbol_name)
                 self._data[data.symbol_name]['grid_size'] = data.grid_size
-                # self._data[data.symbol_name]['lot'] = data.lot
+                self._data[data.symbol_name]['lot'] = data.lot
 
     async def get_config(self, symbol: str, field: str):
         async with self._lock:

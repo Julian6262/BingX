@@ -39,7 +39,7 @@ async def set_state_cmd(message: Message, session: AsyncSession, http_session: C
         await gather(
             price_upd_ws(symbol, http_session=http_session),
             start_trading(symbol, session=session, http_session=http_session),
-            start_indicators(symbol, http_session=http_session, interval='1m')
+            start_indicators(symbol, http_session=http_session)
         )
 
     await message.answer(f"Статус монеты {symbol} изменен c {state_old} на {state_new}")

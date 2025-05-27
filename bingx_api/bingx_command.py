@@ -325,7 +325,9 @@ async def start_trading(symbol, **kwargs):
                             partly_cost_with_fee += order['cost_with_fee']
                             open_times.append(order['open_time'])
                         else:
-                            break
+                            # break
+                            partly_profit -= order['executed_qty'] * price
+                            partly_cost_with_fee_tp -= order['cost_with_fee'] * (1 + partly_target_profit)
 
                     if partly_summary_executed:
                         print(f'\n----------Частичная продажа-------------')
