@@ -38,12 +38,10 @@ async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logi
         case 'macd_1m':
             _, _, hist = talib.MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
 
-            if hist[-2] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
-                print(f'\nПокупаем {symbol}, {datetime.fromtimestamp(int(time()))}')
-                await so_manager.set_b_s_trigger(symbol, 'buy')
 
+            if hist[-2] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
+                await so_manager.set_b_s_trigger(symbol, 'buy')
             elif hist[-2] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
-                print(f'\nПродаем {symbol}, {datetime.fromtimestamp(int(time()))}')
                 await so_manager.set_b_s_trigger(symbol, 'sell')
 
         case 'rsi_4h':
@@ -53,7 +51,6 @@ async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logi
             for (rsi_min, rsi_max), target_lot in rsi_lot_map.items():
                 if rsi_min <= rsi < rsi_max and lot != target_lot:
                     await so_manager.set_lot(symbol, target_lot)
-                    print(f'rsi {rsi}, lot {symbol} = {target_lot}\n')
                     break  # Выходим из цикла после обновления лота
 
 
