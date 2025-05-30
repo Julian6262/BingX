@@ -28,7 +28,7 @@ async def set_state_cmd(message: Message, session: AsyncSession, http_session: C
 
     await gather(
         update_state(session, symbol, state_new),
-        so_manager.update_state(symbol, state_new)
+        so_manager.set_state(symbol, state_new)
     )
 
     if state_old in ('track', 'pause') and state_new == 'stop':

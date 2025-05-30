@@ -1,12 +1,9 @@
 from asyncio import sleep
 from collections import deque
-from datetime import datetime
 from logging import getLogger
-from time import time
-
 from aiohttp import ClientSession
-import talib
-import numpy as np
+from talib import MACD, RSI
+from numpy import array as np_array
 
 from bingx_api.bingx_command import get_candlestick_data, ws_price, so_manager, task_manager, config_manager
 from common.func import add_task
@@ -21,23 +18,24 @@ async def _get_initial_close_prices(symbol: str, http_session: ClientSession, in
         logger.error(f'Ошибка получения данных candlestick {symbol}: {data}, {text}')
         return None
 
-    start_times, close_prices = zip(*[(item[0], item[4]) for item in reversed(data_ok)])
+    # open_times, close_price, hcl = zip(*[(item[0], item[4], (item[2], item[4], item[3])) for item in reversed(data_ok)])
+    open_times, close_price = zip(*[(item[0], item[4]) for item in reversed(data_ok)])
+
 
     timeframe_minutes = {'1m': 1, '4h': 240}
 
     delta = timeframe_minutes[interval] * 60 * 1000 - 1
-    next_candle_time = start_times[-1] + delta
+    next_candle_time = open_times[-1] + delta
 
-    return delta, next_candle_time, deque(close_prices, maxlen=limit)
+    return delta, next_candle_time, deque(close_price, maxlen=limit)
 
 
 async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logic_name: str, rsi_lot_map: dict = None):
-    close_prices = np.array(close_prices_deque, dtype=float)
+    close_prices = np_array(close_prices_deque, dtype=float)
 
     match logic_name:
         case 'macd_1m':
-            _, _, hist = talib.MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
-
+            _, _, hist = MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
 
             if hist[-2] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'buy')
@@ -45,7 +43,7 @@ async def _process_indicators_logic(symbol: str, close_prices_deque: deque, logi
                 await so_manager.set_b_s_trigger(symbol, 'sell')
 
         case 'rsi_4h':
-            rsi = talib.RSI(close_prices, timeperiod=14)[-1]
+            rsi = RSI(close_prices, timeperiod=14)[-1]
             lot = await so_manager.get_lot(symbol)
 
             for (rsi_min, rsi_max), target_lot in rsi_lot_map.items():

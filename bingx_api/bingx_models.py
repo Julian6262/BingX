@@ -114,10 +114,11 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
                 'state': 'stop',
                 'pause_after_sell': False,
                 'b_s_trigger': 'new',
-                'ts': False,
-                'cross_target_ts_price': False,
-                'target_ts_price': 0.0,
-                'stop_ts_price': 0.0,
+                # 'ts': False,
+                # 'cross_target_ts_price': False,
+                # 'sell_state': False,
+                # 'target_ts_price': 0.0,
+                # 'stop_ts_price': 0.0,
                 'profit': 0.0,
                 'lot': 0.0,
                 'orders': []}
@@ -143,41 +144,49 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             self._data[symbol]['pause_after_sell'] = state
 
-    async def set_ts_state(self, symbol: str, state: bool):
-        async with self._lock:
-            self._data[symbol]['ts'] = state
-
-    async def get_ts_state(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol).get('ts')
-
-    async def set_target_ts_price(self, symbol: str, target_price: float):
-        async with self._lock:
-            self._data[symbol]['target_ts_price'] = target_price
-
-    async def get_target_ts_price(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol).get('target_ts_price')
-
-    async def set_stop_ts_price(self, symbol: str, stop_price: float):
-        async with self._lock:
-            self._data[symbol]['stop_ts_price'] = stop_price
-
-    async def get_stop_ts_price(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol).get('stop_ts_price')
-
-    async def set_cross_target_ts(self, symbol: str, cross_target_ts: bool):
-        async with self._lock:
-            self._data[symbol]['cross_target_ts_price'] = cross_target_ts
-
-    async def get_cross_target_ts(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol).get('cross_target_ts_price')
-
     async def get_pause(self, symbol: str):
         async with self._lock:
             return self._data.get(symbol).get('pause_after_sell')
+
+    # async def set_ts_state(self, symbol: str, state: bool):
+    #     async with self._lock:
+    #         self._data[symbol]['ts'] = state
+    #
+    # async def get_ts_state(self, symbol: str):
+    #     async with self._lock:
+    #         return self._data.get(symbol).get('ts')
+
+    # async def set_sell_state(self, symbol: str, state: bool):
+    #     async with self._lock:
+    #         self._data[symbol]['sell_state'] = state
+    #
+    # async def get_sell_state(self, symbol: str):
+    #     async with self._lock:
+    #         return self._data.get(symbol).get('sell_state')
+
+    # async def set_target_ts_price(self, symbol: str, target_price: float):
+    #     async with self._lock:
+    #         self._data[symbol]['target_ts_price'] = target_price
+
+    # async def get_target_ts_price(self, symbol: str):
+    #     async with self._lock:
+    #         return self._data.get(symbol).get('target_ts_price')
+    #
+    # async def set_stop_ts_price(self, symbol: str, stop_price: float):
+    #     async with self._lock:
+    #         self._data[symbol]['stop_ts_price'] = stop_price
+    #
+    # async def get_stop_ts_price(self, symbol: str):
+    #     async with self._lock:
+    #         return self._data.get(symbol).get('stop_ts_price')
+
+    # async def set_cross_target_ts(self, symbol: str, cross_target_ts: bool):
+    #     async with self._lock:
+    #         self._data[symbol]['cross_target_ts_price'] = cross_target_ts
+    #
+    # async def get_cross_target_ts(self, symbol: str):
+    #     async with self._lock:
+    #         return self._data.get(symbol).get('cross_target_ts_price')
 
     async def set_lot(self, symbol: str, lot: float):
         async with self._lock:
@@ -187,7 +196,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             return self._data.get(symbol).get('lot')
 
-    async def update_state(self, symbol: str, state: str):
+    async def set_state(self, symbol: str, state: str):
         async with self._lock:
             self._data[symbol]['state'] = state
 
