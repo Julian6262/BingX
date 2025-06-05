@@ -15,12 +15,10 @@ class Config:
         self.ADMIN: str = getenv('ADMIN')
         self.HEADERS: dict = {'X-BX-APIKEY': self.API_KEY}
 
-        self.TARGET_PROFIT: float = 0.01  # в долях (1%)
-        self.ACCOUNT_BALANCE: float = 2  # в долларах, ниже этого баланса не будет работать бот
+        self.TARGET_PROFIT: float = 0.01  # в долях (1%) для полной продажи
         self.TAKER: float = 0.002  # в долях (0.2%)
         self.MAKER: float = 0.002  # в долях (0.2%)
 
-        self.FEE_RESERVE: float = 0.2  # в долях (20% от суммы), резерв для выплаты комиссии (~ 200 ордеров)
         self.TAKER_MAKER: float = self.TAKER + self.MAKER
 
 

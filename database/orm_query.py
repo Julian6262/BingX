@@ -48,7 +48,7 @@ async def load_from_db(session: AsyncSession, so_manager, config_manager):
 
     symbols_config = (await session.execute(select(SymbolConfig))).scalars().all()
     data_batch = [symbol_config for symbol_config in symbols_config]
-    await config_manager.update_config(data_batch)
+    await config_manager.load_config(data_batch)
 
 
 # Добавить символ в БД

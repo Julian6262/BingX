@@ -114,7 +114,7 @@ async def _check_usdt_balance(lot: float):
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    if not (lot := await so_manager.get_lot(symbol)):
+    if not (lot := await config_manager.get_config(symbol, 'lot')):
         report = f'\nНе удалось получить лот для {symbol}\n'
         logger.warning(report)
         return report
@@ -142,17 +142,25 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
     }
 
+    last_order_price = (await so_manager.get_last_order(symbol))['price']
+
+    report = f"""\n
+              lot: {await config_manager.get_config(symbol, 'lot')}
+              grid_size: {(await config_manager.get_config(symbol, 'grid_size')) * 100}
+              last_order_price: {last_order_price}
+              next_price: {last_order_price * (1 - await config_manager.get_config(symbol, 'grid_size'))}
+              origQty==executedQty {order_data['executedQty'] == order_data['origQty']}
+              execute_qty: {execute_qty}
+              Ордер открыт {symbol}\n{text}\n{str(data)}\n
+"""
+
     await gather(
         add_order(session, symbol, data_for_db),  # Добавить ордер в базу
         so_manager.update_order(symbol, data_for_db),  # Добавить ордер в память
-        # so_manager.set_ts_state(symbol, False)
     )
 
-    report = (f'origQty==executedQty {order_data['executedQty'] == order_data['origQty']}\n'
-              f'execute_qty: {execute_qty}\n'
-              f'\nОрдер открыт {symbol}\n{text}\n{str(data)}\n')
-
     logger.info(report)
+
     return report
 
 
@@ -172,8 +180,6 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
         so_manager.set_pause(symbol, True),
         so_manager.update_profit(symbol, real_profit),
         so_manager.del_orders(symbol, open_times),
-        # so_manager.set_ts_state(symbol, False),
-        # so_manager.set_sell_state(symbol, False)
     )
 
     await update_profit(symbol, session, real_profit)
@@ -251,37 +257,25 @@ async def price_upd_ws(symbol, **kwargs):
         await sleep(5)  # Пауза перед повторным подключением
 
 
-# async def _update_trailing_stop(symbol: str, price: float, profit_percentage: float, trailing_percentage: float):
-#     if not await so_manager.get_ts_state(symbol):  # Проверка трейлинг-стопа, активен или нет
-#         last_order_price = (await so_manager.get_last_order(symbol))['price']
-#         target_ts_price = last_order_price * (1 + profit_percentage)
-#         stop_ts_price = target_ts_price * (1 - trailing_percentage)
-#
-#         await so_manager.set_target_ts_price(symbol, target_ts_price)
-#         await so_manager.set_stop_ts_price(symbol, stop_ts_price)
-#         await so_manager.set_cross_target_ts(symbol, False)
-#         await so_manager.set_ts_state(symbol, True)  # Активируем трейлинг-стоп, чтобы не повторять инициализацию
-#
-#         # print(f'\n----target_ts_price {symbol}: {target_ts_price}\n'
-#         #       f'цена ордера {symbol}: {last_order_price}\n'
-#         #       f'stop_ts_price {symbol}: {stop_ts_price}----\n')
-#
-#     if price > (current_target_ts_price := await so_manager.get_target_ts_price(symbol)):
-#         await so_manager.set_target_ts_price(symbol, price)
-#         await so_manager.set_stop_ts_price(symbol, price * (1 - trailing_percentage))
-#         await so_manager.set_cross_target_ts(symbol, True)  # Помечаем, что целевая цена была превышена
-#
-#         # print(f'\n------------------price {symbol}: {price}------------------\n'
-#         #       f'            current_target_price: {current_target_ts_price}\n'
-#         #       f'-------------Стоп стал: {await so_manager.get_stop_ts_price(symbol)}-------------\n')
-#
-#     elif price <= await so_manager.get_stop_ts_price(symbol) and await so_manager.get_cross_target_ts(symbol):
-#         await so_manager.set_sell_state(symbol, True)
-#         await so_manager.set_ts_state(symbol, False)
-#
-#         # print(f'\n!!ордер  закрыт {symbol}: price {price}!!\n'
-#         #       f'stop_ts_price {await so_manager.get_stop_ts_price(symbol)}\n'
-#         #       f'-----------------------------------\n')
+async def process_upd_profit(symbol: str, price: float):
+    summary_executed = await so_manager.get_summary(symbol, 'executed_qty')
+    total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
+    total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
+    current_profit = price * summary_executed - total_cost_with_fee
+    profit_to_target = price * summary_executed - total_cost_with_fee_tp
+
+    profit_data = {
+        'price': price,
+        'summary_executed': summary_executed,
+        'total_cost_with_fee': total_cost_with_fee,
+        'be_level_with_fee': total_cost_with_fee / summary_executed,
+        'total_cost_with_fee_tp': total_cost_with_fee_tp,
+        'be_level_with_fee_tp': total_cost_with_fee_tp / summary_executed,
+        'current_profit': current_profit,
+        'profit_to_target': profit_to_target
+    }
+
+    await profit_manager.update_data(symbol, profit_data)
 
 
 @add_task(task_manager, so_manager, 'start_trading')
@@ -289,11 +283,7 @@ async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
-    target_profit = config.TARGET_PROFIT
     partly_macd_target_profit = 0.005  # 0.5%
-
-    # partly_ts_target_profit = 0.005  # 0.5%
-    # trailing_percentage = 0.002  # 0.2%
 
     async def trading_logic():
         while not await ws_price.get_price(symbol):
@@ -303,54 +293,27 @@ async def start_trading(symbol, **kwargs):
 
         while True:
             _, price = await ws_price.get_price(symbol)
-            state = await so_manager.get_state(symbol)
 
-            if summary_executed := await so_manager.get_summary(symbol, 'executed_qty'):
-                total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
-                total_cost_with_fee_tp = total_cost_with_fee * (1 + target_profit)
-                current_profit = price * summary_executed - total_cost_with_fee
-                profit_to_target = price * summary_executed - total_cost_with_fee_tp
+            if last_order := await so_manager.get_last_order(symbol):
+                await process_upd_profit(symbol, price)
 
-                profit_data = {
-                    'price': price,
-                    'summary_executed': summary_executed,
-                    'total_cost_with_fee': total_cost_with_fee,
-                    'be_level_with_fee': total_cost_with_fee / summary_executed,
-                    'total_cost_with_fee_tp': total_cost_with_fee_tp,
-                    'be_level_with_fee_tp': total_cost_with_fee_tp / summary_executed,
-                    'current_profit': current_profit,
-                    'profit_to_target': profit_to_target
-                }
-
-                await profit_manager.update_data(symbol, profit_data)
-
-                # await _update_trailing_stop(symbol, price, partly_ts_target_profit, trailing_percentage)
-
-                # Создаем ордер на продажу по всем ордерам, если доход > 1%
-                if profit_to_target > 0:
-                    print(f'\n-----------Полная продажа------------\n')
-                    await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
-
-                # Создаем ордер на продажу частично, сумма ордеров > 0.4%
-                elif await so_manager.get_b_s_trigger(symbol) == 'sell':
-                    # elif await so_manager.get_sell_state(symbol):
+                # Создаем ордер на продажу частично, сумма ордеров > 0.5%
+                if await so_manager.get_b_s_trigger(symbol) == 'sell' and price > last_order['price']:
                     partly_profit = 0.0
-                    partly_cost_with_fee_tp = 0.0
                     partly_cost_with_fee = 0.0
                     partly_summary_executed = 0.0
                     open_times = []
 
                     for order in reversed(await so_manager.get_orders(symbol)):
                         partly_profit += order['executed_qty'] * price
-                        partly_cost_with_fee_tp += order['cost_with_fee'] * (1 + partly_macd_target_profit)
+                        partly_cost_with_fee += order['cost_with_fee']
 
-                        if partly_profit >= partly_cost_with_fee_tp:
+                        if partly_profit >= partly_cost_with_fee * (1 + partly_macd_target_profit):
                             partly_summary_executed += order['executed_qty']
-                            partly_cost_with_fee += order['cost_with_fee']
                             open_times.append(order['open_time'])
                         else:
                             partly_profit -= order['executed_qty'] * price
-                            partly_cost_with_fee_tp -= order['cost_with_fee'] * (1 + partly_macd_target_profit)
+                            partly_cost_with_fee -= order['cost_with_fee']
 
                     if partly_summary_executed:
                         print(f'\n----------Частичная продажа-------------')
@@ -365,12 +328,12 @@ async def start_trading(symbol, **kwargs):
                                                http_session, open_times=open_times)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
-            if state == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
+            if await so_manager.get_state(symbol) == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
                 if await so_manager.get_pause(symbol):
                     await sleep(5)  # Задержка перед покупкой
                     await so_manager.set_pause(symbol, False)
 
-                if last_order := await so_manager.get_last_order(symbol):
+                if last_order:
                     next_price = last_order['price'] * (1 - await config_manager.get_config(symbol, 'grid_size'))
 
                     if price < next_price:
