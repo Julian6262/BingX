@@ -16,16 +16,13 @@ class ConfigManager:
                 self._data[data.symbol_name]['grid_size'] = data.grid_size
                 self._data[data.symbol_name]['lot'] = data.lot
 
-    async def set_config(self, symbol: str, field: str, value: float):
+    async def set_data(self, symbol: str, key: str, value: float | bool):
         async with self._lock:
-            if field == 'lot':
-                self._data[symbol]['lot'] = value
-            elif field == 'grid_size':
-                self._data[symbol]['grid_size'] = value
+            self._data[symbol][key] = value
 
-    async def get_config(self, symbol: str, field: str):
+    async def get_data(self, symbol: str, key: str):
         async with self._lock:
-            return self._data.get(symbol).get(field)
+            return self._data.get(symbol).get(key)
 
 
 class ProfitManager:  # Класс для работы с данными профита
@@ -47,7 +44,12 @@ class AccountManager:  # Класс для работы с данными сче
         self._balance = {}
         self._usdt_block = 'unblock'
         self._listen_key = None
+        # self._data = defaultdict(self._create_default_account_data)
         self._lock = Lock()
+
+    # @staticmethod
+    # def _create_default_account_data():
+    #     return {'usdt_block': 'unblock'}
 
     async def update_balance_batch(self, batch_data: list):
         async with self._lock:
@@ -197,11 +199,12 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
             orders = self._data.get(symbol).get('orders')
             return orders[-1] if orders else None
 
-    async def del_orders(self, symbol: str, open_times: list[datetime] = None):
+    async def del_orders(self, symbol: str, orders_id: list = None):
         async with self._lock:
-            if open_times:
+            if orders_id:
                 if orders := self._data.get(symbol).get('orders'):
-                    self._data[symbol]['orders'] = orders[:-len(open_times)]
+                    orders[:] = [order for order in orders if order['id'] not in orders_id]
+
             else:
                 self._data.get(symbol).get('orders', []).clear()
 

@@ -113,8 +113,28 @@ async def _check_usdt_balance(lot: float):
     return None
 
 
+# async def _check_usdt_balance22(symbol: str):
+#     # usdt_block = await account_manager.get_usdt_block()
+#     usdt_balance = await account_manager.get_balance('USDT')
+#     report = f'\nБаланс слишком маленький: {usdt_balance}\n'
+#
+#     if usdt_balance > lot and usdt_block in ('block', 'continue_block'):
+#         logger.warning(f'\nБаланс пополнился: {usdt_balance}\n')
+#         await account_manager.set_usdt_block('unblock')
+#
+#     if usdt_block == 'block':
+#         await account_manager.set_usdt_block('continue_block')
+#         logger.warning(report)
+#         return report
+#
+#     elif usdt_block == 'continue_block':
+#         return report
+#
+#     return None
+
+
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
-    if not (lot := await config_manager.get_config(symbol, 'lot')):
+    if not (lot := await config_manager.get_data(symbol, 'lot')):
         report = f'\nНе удалось получить лот для {symbol}\n'
         logger.warning(report)
         return report
@@ -142,30 +162,30 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
         'open_time': datetime.fromtimestamp(order_data['transactTime'] / 1000)
     }
 
-    last_order_price = (await so_manager.get_last_order(symbol))['price']
-
     report = f"""\n
-              lot: {await config_manager.get_config(symbol, 'lot')}
-              grid_size: {(await config_manager.get_config(symbol, 'grid_size')) * 100}
-              last_order_price: {last_order_price}
-              next_price: {last_order_price * (1 - await config_manager.get_config(symbol, 'grid_size'))}
+              lot: {await config_manager.get_data(symbol, 'lot')}
+              grid_size: {(await config_manager.get_data(symbol, 'grid_size')) * 100}
               origQty==executedQty {order_data['executedQty'] == order_data['origQty']}
               execute_qty: {execute_qty}
               Ордер открыт {symbol}\n{text}\n{str(data)}\n
 """
 
-    await gather(
-        add_order(session, symbol, data_for_db),  # Добавить ордер в базу
-        so_manager.update_order(symbol, data_for_db),  # Добавить ордер в память
-    )
+    order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
+
+    print(f'\norder_id: {order_id}\n')
+
+    data_for_db['id'] = order_id  # Добавить id ордера в память
+
+    print(f'После добавления ордера в память:\n{data_for_db}\n')
+
+    await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
 
     logger.info(report)
-
     return report
 
 
 async def place_sell_order(symbol: str, summary_executed: float, total_cost_with_fee: float, session: AsyncSession,
-                           http_session: ClientSession, open_times: list[datetime] = None):
+                           http_session: ClientSession, orders_id: list = None):
     # Ордер на продажу по суммарной стоимости покупки монеты, напр 0.00011 BTC
     order_data, text = await place_order(symbol, http_session, 'SELL', summary_executed)
     if not (order_data_ok := order_data.get("data")):
@@ -179,15 +199,16 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
     await gather(
         so_manager.set_pause(symbol, True),
         so_manager.update_profit(symbol, real_profit),
-        so_manager.del_orders(symbol, open_times),
+        so_manager.del_orders(symbol, orders_id),
     )
 
     await update_profit(symbol, session, real_profit)
-    await del_orders(symbol, session, open_times)
+    await del_orders(symbol, session, orders_id)
     await session.commit()
 
     report = (f'\n\nРасчет моей программы:\n'
               f'price: {price}\n'
+              f'orders_id: {orders_id}\n'
               f'summary_executed: {summary_executed}\n'
               f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
               f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
@@ -204,7 +225,7 @@ async def account_upd_ws(http_session: ClientSession):
         await sleep(0.3)  # Задержка перед попыткой получения ключа
 
     channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}
-    url = f"{config.URL_WS}?listenKey={listen_key}"
+    url = f"{config.URL_WS}?listenKey={await account_manager.get_listen_key()}"
 
     while True:  # Цикл для повторного подключения
         try:
@@ -286,10 +307,12 @@ async def start_trading(symbol, **kwargs):
     partly_macd_target_profit = 0.005  # 0.5%
 
     async def trading_logic():
-        while not await ws_price.get_price(symbol):
-            await sleep(0.3)  # Задержка перед попыткой получения цены
+        while not await config_manager.get_data(symbol, 'init_rsi'):
+            await sleep(0.3)  # Задержка перед попыткой данных rsi
 
         logger.info(f'Запуск торговли {symbol}')
+
+        # await _check_usdt_balance22(symbol)
 
         while True:
             _, price = await ws_price.get_price(symbol)
@@ -302,7 +325,7 @@ async def start_trading(symbol, **kwargs):
                     partly_profit = 0.0
                     partly_cost_with_fee = 0.0
                     partly_summary_executed = 0.0
-                    open_times = []
+                    orders_id = []
 
                     for order in reversed(await so_manager.get_orders(symbol)):
                         partly_profit += order['executed_qty'] * price
@@ -310,7 +333,7 @@ async def start_trading(symbol, **kwargs):
 
                         if partly_profit >= partly_cost_with_fee * (1 + partly_macd_target_profit):
                             partly_summary_executed += order['executed_qty']
-                            open_times.append(order['open_time'])
+                            orders_id.append(order['id'])
                         else:
                             partly_profit -= order['executed_qty'] * price
                             partly_cost_with_fee -= order['cost_with_fee']
@@ -321,11 +344,11 @@ async def start_trading(symbol, **kwargs):
                         print(f'partly_summary_executed {partly_summary_executed}')
                         print(f'partly_cost_with_fee {partly_cost_with_fee}')
                         print(f'Доход {partly_summary_executed * price - partly_cost_with_fee}')
-                        print(f'open_times {open_times}')
+                        print(f'orders_id {orders_id}')
                         print(f'-----------------------\n')
 
                         await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,
-                                               http_session, open_times=open_times)
+                                               http_session, orders_id=orders_id)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
             if await so_manager.get_state(symbol) == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
@@ -334,7 +357,7 @@ async def start_trading(symbol, **kwargs):
                     await so_manager.set_pause(symbol, False)
 
                 if last_order:
-                    next_price = last_order['price'] * (1 - await config_manager.get_config(symbol, 'grid_size'))
+                    next_price = last_order['price'] * (1 - await config_manager.get_data(symbol, 'grid_size'))
 
                     if price < next_price:
                         await place_buy_order(symbol, price, session, http_session)

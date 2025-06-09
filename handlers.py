@@ -98,7 +98,7 @@ async def del_orders_cmd(message: Message, session: AsyncSession, http_session: 
     if (summary_executed := await so_manager.get_summary(symbol, 'executed_qty')) is None:
         return await message.answer('Нет открытых ордеров')
 
-    total_cost_with_fee = await so_manager.get_total_cost_with_fee(symbol)
+    total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
 
     report = await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
     await message.answer(report)
@@ -113,7 +113,7 @@ async def sell_order_cmd(message: Message, session: AsyncSession, http_session: 
         return await message.answer('Нет открытых ордеров')
 
     report = await place_sell_order(symbol, order_data['executed_qty'], order_data['cost_with_fee'], session,
-                                    http_session, open_times=[order_data['open_time']])
+                                    http_session, orders_id=[order_data['id']])
     await message.answer(report)
 
 
@@ -167,11 +167,11 @@ async def start_cmd(message: Message, session: AsyncSession, http_session: Clien
     for tasks in so_manager._data.items():
         print(tasks)
 
-    profit = await so_manager.get_profit('ADA')
-    await message.answer(f'profit ADA {profit}')
-    profit = await so_manager.get_profit('TRX')
-    await message.answer(f'profit TRX {profit}')
-    profit = await so_manager.get_profit('XRP')
-    await message.answer(f'profit XRP {profit}')
-    sum_profit = await so_manager.get_summary_profit()
-    await message.answer(f'sum_profit {sum_profit}')
+    # profit = await so_manager.get_profit('ADA')
+    # await message.answer(f'profit ADA {profit}')
+    # profit = await so_manager.get_profit('TRX')
+    # await message.answer(f'profit TRX {profit}')
+    # profit = await so_manager.get_profit('XRP')
+    # await message.answer(f'profit XRP {profit}')
+    # sum_profit = await so_manager.get_summary_profit()
+    # await message.answer(f'sum_profit {sum_profit}')

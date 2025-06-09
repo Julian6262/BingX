@@ -41,13 +41,14 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
 
         case 'rsi_4h':
             rsi = RSI(close_prices, timeperiod=14)[-1]
-            lot = await config_manager.get_config(symbol, 'lot')
-            grid_size = await config_manager.get_config(symbol, 'grid_size')
+            lot = await config_manager.get_data(symbol, 'lot')
+            grid_size = await config_manager.get_data(symbol, 'grid_size')
 
             for (rsi_min, rsi_max), (target_lot, target_grid_size) in lot_map.items():
                 if rsi_min <= rsi < rsi_max and (lot != target_lot or grid_size != target_grid_size):
-                    await config_manager.set_config(symbol, 'lot', target_lot)
-                    await config_manager.set_config(symbol, 'grid_size', target_grid_size)
+                    await config_manager.set_data(symbol, 'lot', target_lot)
+                    await config_manager.set_data(symbol, 'grid_size', target_grid_size)
+                    await config_manager.set_data(symbol, 'init_rsi', True)
 
                     print(f'symb {symbol}, r_min {rsi_min}, r_max {rsi_max}, lot {target_lot}, grid {target_grid_size}')
 
@@ -57,7 +58,7 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
 @add_task(task_manager, so_manager, 'start_indicators')
 async def start_indicators(symbol: str, http_session: ClientSession):
     while not await ws_price.get_price(symbol):
-        await sleep(0.5)  # Задержка перед попыткой получения цены
+        await sleep(0.3)  # Задержка перед попыткой получения цены
 
     initial_1m_data = await _get_initial_close_prices(symbol, http_session, '1m')
     initial_4h_data = await _get_initial_close_prices(symbol, http_session, '4h')
@@ -70,23 +71,21 @@ async def start_indicators(symbol: str, http_session: ClientSession):
 
     logger.info(f'Запуск start_indicators {symbol}')
 
-    symbol_lot = await config_manager.get_config(symbol, 'lot')
-    grid_size = await config_manager.get_config(symbol, 'grid_size')
+    symbol_lot = await config_manager.get_data(symbol, 'lot')
+    grid_size = await config_manager.get_data(symbol, 'grid_size')
 
     rsi_lot_and_grid_map = {
-        (-float('inf'), 20): (symbol_lot * 3, grid_size * 3.2),
+        (-float('inf'), 20): (symbol_lot * 3, grid_size * 3.3),
         (20, 25): (symbol_lot * 2.5, grid_size * 2.9),
         (25, 30): (symbol_lot * 2, grid_size * 2.5),
-        (30, 40): (symbol_lot * 1.5, grid_size * 2),
-        (40, 50): (symbol_lot, grid_size * 1.6),
-        (50, 60): (symbol_lot * 0.75, grid_size * 1.3),
+        (30, 35): (symbol_lot * 1.75, grid_size * 2.25),
+        (35, 40): (symbol_lot * 1.5, grid_size * 1.9),
+        (40, 50): (symbol_lot, grid_size * 1.45),
+        (50, 60): (symbol_lot * 0.75, grid_size * 1.25),
         (60, 65): (symbol_lot * 0.35, grid_size * 1.1),
         (65, 70): (symbol_lot * 0.2, grid_size),
         (70, float('inf')): (symbol_lot * 0.17, grid_size)
     }
-
-    await _process_indicators_logic(symbol, close_prices_deque_1m, 'macd_1m')
-    await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', rsi_lot_and_grid_map)
 
     while True:
         time_now, price = await ws_price.get_price(symbol)
@@ -101,7 +100,7 @@ async def start_indicators(symbol: str, http_session: ClientSession):
         if time_now >= next_candle_time_4h:
             close_prices_deque_4h.append(price)
             next_candle_time_4h += delta_4h
-        if await so_manager.get_b_s_trigger(symbol) == 'buy':  # вызываем индикатор rsi_4h только если покупаем
+        if await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
             await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', rsi_lot_and_grid_map)
 
         await sleep(1)

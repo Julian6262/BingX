@@ -17,6 +17,7 @@ async def add_order(session: AsyncSession, symbol_name: str, data: dict):
         new_order = OrderInfo(**data, symbol=db_symbol)
         session.add(new_order)
         await session.commit()
+        return int(new_order.id)
 
     except Exception as e:
         logger.error(f'Error adding order to DB: {e}')
@@ -29,8 +30,8 @@ async def update_state(session: AsyncSession, symbol_name: str, state: str):
 
 
 # Удалить из БД последний ордер / или все ордера
-async def del_orders(symbol_name: str, session: AsyncSession, open_times: list[datetime] = None):
-    query = (OrderInfo.open_time.in_(open_times)) if open_times else OrderInfo.symbol.has(name=symbol_name)
+async def del_orders(symbol_name: str, session: AsyncSession, orders_id: list = None):
+    query = (OrderInfo.id.in_(orders_id)) if orders_id else OrderInfo.symbol.has(name=symbol_name)
     await session.execute(delete(OrderInfo).where(query))
 
 
