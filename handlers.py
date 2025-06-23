@@ -6,7 +6,7 @@ from aiohttp import ClientSession
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bingx_api.bingx_command import price_upd_ws, get_symbol_info, start_trading, place_buy_order, so_manager, ws_price, \
-    task_manager, place_sell_order, profit_manager, config_manager
+    task_manager, place_sell_order, config_manager
 from common.config import config
 from database.orm_query import del_symbol, add_symbol, update_state
 from filters.chat_types import IsAdmin
@@ -38,8 +38,8 @@ async def set_state_cmd(message: Message, session: AsyncSession, http_session: C
     elif state_old == 'stop' and state_new in ('track', 'pause'):
         await gather(
             price_upd_ws(symbol, http_session=http_session),
-            start_trading(symbol, session=session, http_session=http_session),
-            start_indicators(symbol, http_session=http_session)
+            start_indicators(symbol, http_session=http_session),
+            start_trading(symbol, session=session, http_session=http_session)
         )
 
     await message.answer(f"Статус монеты {symbol} изменен c {state_old} на {state_new}")
@@ -53,22 +53,26 @@ async def get_profit_cmd(message: Message):
     if await so_manager.get_state(symbol) == 'stop':
         return await message.answer('Отслеживание монеты остановлено!')
 
-    if not (profit_data := await profit_manager.get_data(symbol)):
-        return await message.answer('Данные не готовы')
+    if not (price_data := await ws_price.get_price(symbol)):
+        return await message.answer('Цена не обновлена')
 
-    price = profit_data['price']
-    summary_executed = profit_data['summary_executed']
+    _, price = price_data
+    summary_executed = await so_manager.get_summary(symbol, 'executed_qty')
+    total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
+    total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
+    current_profit = price * summary_executed - total_cost_with_fee
+    profit_to_target = price * summary_executed - total_cost_with_fee_tp
 
     await message.answer(
         f'\nprice: {price}\n'
         f'summary_executed: {summary_executed}\n'
         f'\nprice * summary_executed: {price * summary_executed}\n'
-        f'сумма с комиссией биржи (total_cost_with_fee): {profit_data['total_cost_with_fee']}\n'
-        f'сумма с комиссией биржи + 1% (total_cost_with_fee_tp): {profit_data['total_cost_with_fee_tp']}\n'
-        f'\nДоход с учетом комиссии биржи: {profit_data['current_profit']}\n'
-        f'Доход с учетом комиссии биржи до достижения 1%: {profit_data['profit_to_target']}\n'
-        f'безубыток с комиссией биржи (be_level_with_fee): {profit_data['be_level_with_fee']}\n'
-        f'безубыток с комиссией биржи + 1% (be_level_with_fee_tp): {profit_data['be_level_with_fee_tp']}\n'
+        f'сумма с комиссией биржи (total_cost_with_fee): {total_cost_with_fee}\n'
+        f'сумма с комиссией биржи + 1% (total_cost_with_fee_tp): {total_cost_with_fee_tp}\n'
+        f'\nДоход с учетом комиссии биржи: {current_profit}\n'
+        f'Доход с учетом комиссии биржи до достижения 1%: {profit_to_target}\n'
+        f'безубыток с комиссией биржи (be_level_with_fee): {total_cost_with_fee / summary_executed}\n'
+        f'безубыток с комиссией биржи + 1% (be_level_with_fee_tp): {total_cost_with_fee_tp / summary_executed}\n'
         # f'До достижения безубыток с комиссией биржи: {be_level_with_fee - price}\n'
         # f'До достижения  безубыток с комиссией биржи + 1%: {be_level_with_fee_tp - price}\n'
     )

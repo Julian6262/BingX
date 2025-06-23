@@ -1,13 +1,19 @@
-from datetime import datetime
 from logging import getLogger
 
 from sqlalchemy import select, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from database.models import OrderInfo, Symbol, SymbolConfig
+from database.models import OrderInfo, Symbol, SymbolConfig, Base
 
 logger = getLogger('my_app')
+
+
+async def init_db(engine, drop_all=False):
+    async with engine.begin() as conn:
+        if drop_all:
+            await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)  # Всегда создаем таблицы
 
 
 # Добавить новый ордер в БД

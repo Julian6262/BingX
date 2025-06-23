@@ -14,8 +14,7 @@ from json import loads, JSONDecodeError
 from common.config import config
 from common.func import get_decimal_places, add_task
 from database.orm_query import add_order, update_profit, del_orders
-from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ProfitManager, \
-    ConfigManager
+from bingx_api.bingx_models import WebSocketPrice, SymbolOrderManager, AccountManager, TaskManager, ConfigManager
 
 logger = getLogger('my_app')
 
@@ -23,7 +22,6 @@ ws_price = WebSocketPrice()
 so_manager = SymbolOrderManager()
 account_manager = AccountManager()
 task_manager = TaskManager()
-profit_manager = ProfitManager()
 config_manager = ConfigManager()
 
 
@@ -69,6 +67,9 @@ async def place_order(symbol: str, session: ClientSession, side: str, executed_q
     endpoint = '/openApi/spot/v1/trade/order'
     params = {"symbol": f'{symbol}-USDT', "type": "MARKET", "side": side, "quantity": executed_qty}
 
+    # logger.info(f'пауза перед сделкой для {symbol}')
+    # await sleep(3)  # Задержка перед сделкой
+
     return await _send_request("POST", session, endpoint, params)
 
 
@@ -101,36 +102,15 @@ async def _check_usdt_balance(lot: float):
     if usdt_balance > lot and usdt_block in ('block', 'continue_block'):
         logger.warning(f'\nБаланс пополнился: {usdt_balance}\n')
         await account_manager.set_usdt_block('unblock')
+        return None
 
-    if usdt_block == 'block':
+    elif usdt_block == 'block':
         await account_manager.set_usdt_block('continue_block')
         logger.warning(report)
         return report
 
     elif usdt_block == 'continue_block':
         return report
-
-    return None
-
-
-# async def _check_usdt_balance22(symbol: str):
-#     # usdt_block = await account_manager.get_usdt_block()
-#     usdt_balance = await account_manager.get_balance('USDT')
-#     report = f'\nБаланс слишком маленький: {usdt_balance}\n'
-#
-#     if usdt_balance > lot and usdt_block in ('block', 'continue_block'):
-#         logger.warning(f'\nБаланс пополнился: {usdt_balance}\n')
-#         await account_manager.set_usdt_block('unblock')
-#
-#     if usdt_block == 'block':
-#         await account_manager.set_usdt_block('continue_block')
-#         logger.warning(report)
-#         return report
-#
-#     elif usdt_block == 'continue_block':
-#         return report
-#
-#     return None
 
 
 async def place_buy_order(symbol: str, price: float, session: AsyncSession, http_session: ClientSession):
@@ -146,6 +126,8 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     execute_qty = round(lot / price, get_decimal_places(await so_manager.get_step_size(symbol)))
 
     data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty)
+    # await so_manager.set_pause(True)
+
     if not (order_data := data.get("data")):
         if data["code"] == 100202:  # Если ответ от биржи 100202, то нехватает средств, блокируем покупки
             await account_manager.set_usdt_block('block')
@@ -171,13 +153,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 """
 
     order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
-
-    print(f'\norder_id: {order_id}\n')
-
     data_for_db['id'] = order_id  # Добавить id ордера в память
-
-    print(f'После добавления ордера в память:\n{data_for_db}\n')
-
     await so_manager.update_order(symbol, data_for_db)  # Добавить ордер в память
 
     logger.info(report)
@@ -197,7 +173,7 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
     real_profit = float(order_data_ok["cummulativeQuoteQty"]) - total_cost_with_fee
 
     await gather(
-        so_manager.set_pause(symbol, True),
+        # so_manager.set_pause(True),
         so_manager.update_profit(symbol, real_profit),
         so_manager.del_orders(symbol, orders_id),
     )
@@ -278,25 +254,13 @@ async def price_upd_ws(symbol, **kwargs):
         await sleep(5)  # Пауза перед повторным подключением
 
 
-async def process_upd_profit(symbol: str, price: float):
-    summary_executed = await so_manager.get_summary(symbol, 'executed_qty')
-    total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
-    total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
-    current_profit = price * summary_executed - total_cost_with_fee
-    profit_to_target = price * summary_executed - total_cost_with_fee_tp
-
-    profit_data = {
-        'price': price,
-        'summary_executed': summary_executed,
-        'total_cost_with_fee': total_cost_with_fee,
-        'be_level_with_fee': total_cost_with_fee / summary_executed,
-        'total_cost_with_fee_tp': total_cost_with_fee_tp,
-        'be_level_with_fee_tp': total_cost_with_fee_tp / summary_executed,
-        'current_profit': current_profit,
-        'profit_to_target': profit_to_target
-    }
-
-    await profit_manager.update_data(symbol, profit_data)
+# async def _process_trading_pause(symbol: str):
+#     logger.warning(f"проверка паузы торговли для {symbol}")
+#     if await so_manager.get_pause():
+#         logger.warning(f"пауза торговли для {symbol}")
+#         await sleep(3)  # Задержка перед сделкой
+#         await so_manager.set_pause(False)
+#         logger.warning(f"пауза торговли для {symbol} завершена")
 
 
 @add_task(task_manager, so_manager, 'start_trading')
@@ -304,7 +268,7 @@ async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
-    partly_macd_target_profit = 0.005  # 0.5%
+    partly_target_profit = 0.005  # 0.5%
 
     async def trading_logic():
         while not await config_manager.get_data(symbol, 'init_rsi'):
@@ -312,15 +276,11 @@ async def start_trading(symbol, **kwargs):
 
         logger.info(f'Запуск торговли {symbol}')
 
-        # await _check_usdt_balance22(symbol)
-
         while True:
             _, price = await ws_price.get_price(symbol)
 
+            # Создаем ордер на продажу частично, сумма ордеров > 0.5%
             if last_order := await so_manager.get_last_order(symbol):
-                await process_upd_profit(symbol, price)
-
-                # Создаем ордер на продажу частично, сумма ордеров > 0.5%
                 if await so_manager.get_b_s_trigger(symbol) == 'sell' and price > last_order['price']:
                     partly_profit = 0.0
                     partly_cost_with_fee = 0.0
@@ -331,7 +291,7 @@ async def start_trading(symbol, **kwargs):
                         partly_profit += order['executed_qty'] * price
                         partly_cost_with_fee += order['cost_with_fee']
 
-                        if partly_profit >= partly_cost_with_fee * (1 + partly_macd_target_profit):
+                        if partly_profit >= partly_cost_with_fee * (1 + partly_target_profit):
                             partly_summary_executed += order['executed_qty']
                             orders_id.append(order['id'])
                         else:
@@ -347,25 +307,24 @@ async def start_trading(symbol, **kwargs):
                         print(f'orders_id {orders_id}')
                         print(f'-----------------------\n')
 
+                        # await _process_trading_pause(symbol)  # !!!!!!!!!!!!!
                         await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,
                                                http_session, orders_id=orders_id)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
             if await so_manager.get_state(symbol) == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
-                if await so_manager.get_pause(symbol):
-                    await sleep(5)  # Задержка перед покупкой
-                    await so_manager.set_pause(symbol, False)
-
                 if last_order:
                     next_price = last_order['price'] * (1 - await config_manager.get_data(symbol, 'grid_size'))
 
                     if price < next_price:
+                        # await _process_trading_pause(symbol)  # !!!!!!!!!!!!!
                         await place_buy_order(symbol, price, session, http_session)
 
                 else:  # Если нет последнего ордера, то покупаем сразу
+                    # await _process_trading_pause(symbol)  # !!!!!!!!!!!!!
                     await place_buy_order(symbol, price, session, http_session)
 
-            await sleep(0.05)
+            await sleep(1)
 
     if session is None:  # Сессия не передана, создаем новый async_session_maker
         async with async_session() as session:

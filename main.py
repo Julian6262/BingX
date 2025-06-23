@@ -6,8 +6,7 @@ from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from common.config import config
-from database.db_utils import init_db
-from database.orm_query import load_from_db
+from database.orm_query import load_from_db, init_db
 from handlers import router
 from indicators.indicator_models import start_indicators
 from bingx_api.bingx_command import price_upd_ws, manage_listen_key, account_upd_ws, so_manager, start_trading, \

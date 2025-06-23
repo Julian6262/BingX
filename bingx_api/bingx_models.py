@@ -1,6 +1,5 @@
 from asyncio import Lock, CancelledError
 from collections import defaultdict
-from datetime import datetime
 
 
 class ConfigManager:
@@ -25,31 +24,12 @@ class ConfigManager:
             return self._data.get(symbol).get(key)
 
 
-class ProfitManager:  # Класс для работы с данными профита
-    def __init__(self):
-        self._data = {}
-        self._lock = Lock()
-
-    async def update_data(self, symbol: str, data: dict):
-        async with self._lock:
-            self._data[symbol] = data
-
-    async def get_data(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol)
-
-
 class AccountManager:  # Класс для работы с данными счета
     def __init__(self):
         self._balance = {}
         self._usdt_block = 'unblock'
         self._listen_key = None
-        # self._data = defaultdict(self._create_default_account_data)
         self._lock = Lock()
-
-    # @staticmethod
-    # def _create_default_account_data():
-    #     return {'usdt_block': 'unblock'}
 
     async def update_balance_batch(self, batch_data: list):
         async with self._lock:
@@ -114,6 +94,7 @@ class WebSocketPrice:  # Класс для работы с ценами в ре�
 class SymbolOrderManager:  # Класс для работы с ордерами в реальном времени
     def __init__(self):
         self.symbols = []
+        # self._trading_pause = False
         self._data = defaultdict(self._create_default_symbol_data)
         self._lock = Lock()
 
@@ -121,7 +102,7 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
     def _create_default_symbol_data(step_size: float = 0.0):
         return {'step_size': step_size,
                 'state': 'stop',
-                'pause_after_sell': False,
+                # 'pause_after_trade': False,
                 'b_s_trigger': 'new',
                 'profit': 0.0,
                 'orders': []}
@@ -143,13 +124,15 @@ class SymbolOrderManager:  # Класс для работы с ордерами 
         async with self._lock:
             return self._data.get(symbol).get('b_s_trigger')
 
-    async def set_pause(self, symbol: str, state: bool):
-        async with self._lock:
-            self._data[symbol]['pause_after_sell'] = state
-
-    async def get_pause(self, symbol: str):
-        async with self._lock:
-            return self._data.get(symbol).get('pause_after_sell')
+    # async def set_pause(self, state: bool):
+    #     async with self._lock:
+    #         # self._data[symbol]['pause_after_trade'] = state
+    #         self._trading_pause = state
+    #
+    # async def get_pause(self):
+    #     async with self._lock:
+    #         # return self._data.get(symbol).get('pause_after_trade')
+    #         return self._trading_pause
 
     async def set_state(self, symbol: str, state: str):
         async with self._lock:
