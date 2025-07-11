@@ -48,7 +48,7 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
                 if rsi_min <= rsi < rsi_max and (lot != target_lot or grid_size != target_grid_size):
                     await config_manager.set_data(symbol, 'lot', target_lot)
                     await config_manager.set_data(symbol, 'grid_size', target_grid_size)
-                    await config_manager.set_data(symbol, 'init_rsi', True)
+                    await config_manager.set_data(symbol, 'init_rsi', True)  # сначала индикатор, потом запуск торгов
                     break  # Выходим из цикла после обновления лота
 
 

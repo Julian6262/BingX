@@ -67,9 +67,6 @@ async def place_order(symbol: str, session: ClientSession, side: str, executed_q
     endpoint = '/openApi/spot/v1/trade/order'
     params = {"symbol": f'{symbol}-USDT', "type": "MARKET", "side": side, "quantity": executed_qty}
 
-    # logger.info(f'пауза перед сделкой для {symbol}')
-    # await sleep(3)  # Задержка перед сделкой
-
     return await _send_request("POST", session, endpoint, params)
 
 
@@ -126,7 +123,6 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     execute_qty = round(lot / price, get_decimal_places(await so_manager.get_step_size(symbol)))
 
     data, text = await place_order(symbol, http_session, 'BUY', executed_qty=execute_qty)
-    # await so_manager.set_pause(True)
 
     if not (order_data := data.get("data")):
         if data["code"] == 100202:  # Если ответ от биржи 100202, то нехватает средств, блокируем покупки
@@ -146,6 +142,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
 
     report = f"""\n
               lot: {await config_manager.get_data(symbol, 'lot')}
+              cummulativeQuoteQty: {order_data['cummulativeQuoteQty']}
               grid_size: {(await config_manager.get_data(symbol, 'grid_size')) * 100}
               origQty==executedQty {order_data['executedQty'] == order_data['origQty']}
               execute_qty: {execute_qty}
@@ -173,7 +170,6 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
     real_profit = float(order_data_ok["cummulativeQuoteQty"]) - total_cost_with_fee
 
     await gather(
-        # so_manager.set_pause(True),
         so_manager.update_profit(symbol, real_profit),
         so_manager.del_orders(symbol, orders_id),
     )
@@ -196,12 +192,40 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
     return report
 
 
+# async def transaction_upd_ws(http_session: ClientSession):
+#     while not (listen_key := await account_manager.get_listen_key()):
+#         await sleep(0.3)  # Задержка перед попыткой получения ключа
+#
+#     channel = {"id": "1", "reqType": "sub", "dataType": "spot.executionReport"}
+#     url = f"{config.URL_WS}?listenKey={listen_key}"
+#
+#     while True:  # Цикл для повторного подключения
+#         try:
+#             async with http_session.ws_connect(url) as ws:
+#                 logger.info(f"WebSocket connected transaction_upd_ws")
+#                 await ws.send_json(channel)
+#
+#                 async for message in ws:
+#                     try:
+#                         if 'data' in (data := loads(decompress(message.data).decode())):
+#                             logger.info(f"transaction_upd_ws: {data}")
+#
+#                     except Exception as e:
+#                         logger.error(f"Непредвиденная ошибка transaction_upd_ws: {e}, сообщение: {message.data}")
+#
+#         except Exception as e:
+#             logger.error(f"Критическая ошибка transaction_upd_ws: {e}")
+#
+#         logger.error(f"transaction_upd_ws завершился. Переподключение через 5 секунд.")
+#         await sleep(5)
+
+
 async def account_upd_ws(http_session: ClientSession):
     while not (listen_key := await account_manager.get_listen_key()):
         await sleep(0.3)  # Задержка перед попыткой получения ключа
 
     channel = {"id": "1", "reqType": "sub", "dataType": "ACCOUNT_UPDATE"}
-    url = f"{config.URL_WS}?listenKey={await account_manager.get_listen_key()}"
+    url = f"{config.URL_WS}?listenKey={listen_key}"
 
     while True:  # Цикл для повторного подключения
         try:
@@ -254,15 +278,6 @@ async def price_upd_ws(symbol, **kwargs):
         await sleep(5)  # Пауза перед повторным подключением
 
 
-# async def _process_trading_pause(symbol: str):
-#     logger.warning(f"проверка паузы торговли для {symbol}")
-#     if await so_manager.get_pause():
-#         logger.warning(f"пауза торговли для {symbol}")
-#         await sleep(3)  # Задержка перед сделкой
-#         await so_manager.set_pause(False)
-#         logger.warning(f"пауза торговли для {symbol} завершена")
-
-
 @add_task(task_manager, so_manager, 'start_trading')
 async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
@@ -279,7 +294,7 @@ async def start_trading(symbol, **kwargs):
         while True:
             _, price = await ws_price.get_price(symbol)
 
-            # Создаем ордер на продажу частично, сумма ордеров > 0.5%
+            # Создаем ордер на продажу частично, сумма ордеров > partly_target_profit
             if last_order := await so_manager.get_last_order(symbol):
                 if await so_manager.get_b_s_trigger(symbol) == 'sell' and price > last_order['price']:
                     partly_profit = 0.0
@@ -307,7 +322,6 @@ async def start_trading(symbol, **kwargs):
                         print(f'orders_id {orders_id}')
                         print(f'-----------------------\n')
 
-                        # await _process_trading_pause(symbol)  # !!!!!!!!!!!!!
                         await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,
                                                http_session, orders_id=orders_id)
 
@@ -317,11 +331,9 @@ async def start_trading(symbol, **kwargs):
                     next_price = last_order['price'] * (1 - await config_manager.get_data(symbol, 'grid_size'))
 
                     if price < next_price:
-                        # await _process_trading_pause(symbol)  # !!!!!!!!!!!!!
                         await place_buy_order(symbol, price, session, http_session)
 
                 else:  # Если нет последнего ордера, то покупаем сразу
-                    # await _process_trading_pause(symbol)  # !!!!!!!!!!!!!
                     await place_buy_order(symbol, price, session, http_session)
 
             await sleep(1)

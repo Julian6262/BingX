@@ -57,7 +57,9 @@ async def get_profit_cmd(message: Message):
         return await message.answer('Цена не обновлена')
 
     _, price = price_data
-    summary_executed = await so_manager.get_summary(symbol, 'executed_qty')
+    if not (summary_executed := await so_manager.get_summary(symbol, 'executed_qty')):
+        return await message.answer('Нет открытых ордеров')
+
     total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
     total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
     current_profit = price * summary_executed - total_cost_with_fee
