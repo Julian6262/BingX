@@ -162,7 +162,7 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
     # Ордер на продажу по суммарной стоимости покупки монеты, напр 0.00011 BTC
     order_data, text = await place_order(symbol, http_session, 'SELL', summary_executed)
     if not (order_data_ok := order_data.get("data")):
-        report = f'\n\nПродажа не прошла: {text}\n{str(order_data)}\n\n'
+        report = f'\n\nПродажа не прошла {symbol} summary_executed {summary_executed}: {text}\n{str(order_data)}\n\n'
         logger.error(report)
         return report
 
