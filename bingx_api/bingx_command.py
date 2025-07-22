@@ -314,6 +314,9 @@ async def start_trading(symbol, **kwargs):
                             partly_cost_with_fee -= order['cost_with_fee']
 
                     if partly_summary_executed:
+                        step_size = await so_manager.get_step_size(symbol)
+                        partly_summary_executed = round(partly_summary_executed, get_decimal_places(step_size))
+
                         print(f'\n----------Частичная продажа-------------')
                         print(f'price {price}')
                         print(f'partly_summary_executed {partly_summary_executed}')
