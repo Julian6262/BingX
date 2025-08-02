@@ -5,7 +5,8 @@ from aiohttp import ClientSession
 from talib import MACD, RSI
 from numpy import array as np_array
 
-from bingx_api.bingx_command import get_candlestick_data, ws_price, so_manager, task_manager, config_manager
+from bingx_api.bingx_command import get_candlestick_data, ws_price, so_manager, task_manager, config_manager, \
+    account_manager
 from common.func import add_task
 
 logger = getLogger('my_app')
@@ -27,7 +28,7 @@ async def _get_initial_close_prices(symbol: str, http_session: ClientSession, in
     return delta, next_candle_time, deque(close_price, maxlen=limit)
 
 
-async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name: str, lot_map: dict = None):
+async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name: str):
     close_prices = np_array(close_prices, dtype=float)
 
     match logic_name:
@@ -41,12 +42,40 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
 
         case 'rsi_4h':
             rsi = RSI(close_prices, timeperiod=14)[-1]
-            lot = await config_manager.get_data(symbol, 'lot')
             grid_size = await config_manager.get_data(symbol, 'grid_size')
+            usdt_balance = await account_manager.get_balance('USDT')
 
-            for (rsi_min, rsi_max), (target_lot, target_grid_size) in lot_map.items():
-                if rsi_min <= rsi < rsi_max and (lot != target_lot or grid_size != target_grid_size):
+            main_lot_map = {
+                (0, 400): 10,
+                (400, 900): 20,
+                (900, 1400): 30,
+                (1400, 2000): 40,
+                (2000, 2600): 50,
+                (2600, 3300): 60,
+            }
+
+            for (min_balance, max_balance), lot in main_lot_map.items():
+                if min_balance <= usdt_balance < max_balance:
+                    main_lot = lot
+                    break
+
+            rsi_lot_and_grid_map = {
+                (-float('inf'), 20): (main_lot * 3, grid_size * 3.8),
+                (20, 25): (main_lot * 2.5, grid_size * 3.35),
+                (25, 30): (main_lot * 2, grid_size * 2.9),
+                (30, 35): (main_lot * 1.75, grid_size * 2.45),
+                (35, 40): (main_lot * 1.5, grid_size * 1.95),
+                (40, 50): (main_lot, grid_size * 1.55),
+                (50, 60): (main_lot * 0.75, grid_size * 1.3),
+                (60, 65): (main_lot * 0.35, grid_size * 1.2),
+                (65, 70): (main_lot * 0.2, grid_size * 1.1),
+                (70, float('inf')): (main_lot * 0.15, grid_size)
+            }
+
+            for (rsi_min, rsi_max), (target_lot, target_grid_size) in rsi_lot_and_grid_map.items():
+                if rsi_min <= rsi < rsi_max and (main_lot != target_lot or grid_size != target_grid_size):
                     await config_manager.set_data(symbol, 'lot', target_lot)
+                    await config_manager.set_data(symbol, 'main_lot', main_lot)
                     await config_manager.set_data(symbol, 'grid_size', target_grid_size)
                     await config_manager.set_data(symbol, 'init_rsi', True)  # сначала индикатор, потом запуск торгов
                     break  # Выходим из цикла после обновления лота
@@ -68,22 +97,6 @@ async def start_indicators(symbol: str, http_session: ClientSession):
 
     logger.info(f'Запуск start_indicators {symbol}')
 
-    symbol_lot = await config_manager.get_data(symbol, 'lot')
-    grid_size = await config_manager.get_data(symbol, 'grid_size')
-
-    rsi_lot_and_grid_map = {
-        (-float('inf'), 20): (symbol_lot * 3, grid_size * 3.8),
-        (20, 25): (symbol_lot * 2.5, grid_size * 3.35),
-        (25, 30): (symbol_lot * 2, grid_size * 2.9),
-        (30, 35): (symbol_lot * 1.75, grid_size * 2.45),
-        (35, 40): (symbol_lot * 1.5, grid_size * 1.95),
-        (40, 50): (symbol_lot, grid_size * 1.55),
-        (50, 60): (symbol_lot * 0.75, grid_size * 1.3),
-        (60, 65): (symbol_lot * 0.35, grid_size * 1.2),
-        (65, 70): (symbol_lot * 0.2, grid_size * 1.1),
-        (70, float('inf')): (symbol_lot * 0.15, grid_size)
-    }
-
     while True:
         time_now, price = await ws_price.get_price(symbol)
 
@@ -97,7 +110,9 @@ async def start_indicators(symbol: str, http_session: ClientSession):
         if time_now >= next_candle_time_4h:
             close_prices_deque_4h.append(price)
             next_candle_time_4h += delta_4h
+
+        # !!!!!!!!!! запускается много раз, изменить логику !!!!!!!!!!!!!!!
         if await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
-            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', rsi_lot_and_grid_map)
+            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h')
 
         await sleep(1)

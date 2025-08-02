@@ -141,7 +141,8 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     }
 
     report = f"""\n
-              lot: {await config_manager.get_data(symbol, 'lot')}
+              RSI_lot: {await config_manager.get_data(symbol, 'lot')}
+              main_lot: {await config_manager.get_data(symbol, 'main_lot')}
               cummulativeQuoteQty: {order_data['cummulativeQuoteQty']}
               grid_size: {(await config_manager.get_data(symbol, 'grid_size')) * 100}
               origQty==executedQty {order_data['executedQty'] == order_data['origQty']}
@@ -230,7 +231,7 @@ async def account_upd_ws(http_session: ClientSession):
     while True:  # Цикл для повторного подключения
         try:
             async with http_session.ws_connect(url) as ws:
-                logger.info(f"WebSocket connected account_upd_ws")
+                print(f"WebSocket connected account_upd_ws")
                 await ws.send_json(channel)
 
                 async for message in ws:
@@ -243,7 +244,7 @@ async def account_upd_ws(http_session: ClientSession):
                         logger.error(f"Непредвиденная ошибка account_upd_ws: {e}, сообщение: {message.data}")
 
         except Exception as e:
-            logger.error(f"Критическая ошибка account_upd_ws: {e}")
+            print(f"Критическая ошибка account_upd_ws: {e}")
 
         logger.error(f"account_upd_ws завершился. Переподключение через 5 секунд.")
         await sleep(5)
@@ -260,7 +261,7 @@ async def price_upd_ws(symbol, **kwargs):
     while True:
         try:
             async with http_session.ws_connect(config.URL_WS) as ws:
-                logger.info(f"WebSocket connected price_upd_ws for {symbol}")
+                print(f"WebSocket connected price_upd_ws for {symbol}")
                 await ws.send_json(channel)
 
                 async for message in ws:
@@ -272,7 +273,7 @@ async def price_upd_ws(symbol, **kwargs):
                         logger.error(f"Непредвиденная ошибка price_upd_ws: {e}, сообщение: {message.data}")
 
         except Exception as e:
-            logger.error(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
+            print(f"Критическая ошибка price_upd_ws: {symbol}, {e}")
 
         logger.error(f"price_upd_ws для {symbol} завершился. Переподключение через 5 секунд.")
         await sleep(5)  # Пауза перед повторным подключением
