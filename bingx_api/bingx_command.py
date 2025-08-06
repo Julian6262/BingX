@@ -143,6 +143,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     report = f"""\n
               RSI_lot: {await config_manager.get_data(symbol, 'lot')}
               main_lot: {await config_manager.get_data(symbol, 'main_lot')}
+              balance: {await account_manager.get_balance('USDT')}
               cummulativeQuoteQty: {order_data['cummulativeQuoteQty']}
               grid_size: {(await config_manager.get_data(symbol, 'grid_size')) * 100}
               origQty==executedQty {order_data['executedQty'] == order_data['origQty']}
@@ -330,15 +331,18 @@ async def start_trading(symbol, **kwargs):
                                                http_session, orders_id=orders_id)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
-            if await so_manager.get_state(symbol) == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
-                if last_order:
-                    next_price = last_order['price'] * (1 - await config_manager.get_data(symbol, 'grid_size'))
+            # if await so_manager.get_state(symbol) == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
+            if last_order:
+                next_price = last_order['price'] * (1 - await config_manager.get_data(symbol, 'target_grid_size'))
 
-                    if price < next_price:
-                        await place_buy_order(symbol, price, session, http_session)
+                # print(f'{symbol} grid_size {await config_manager.get_data(symbol, 'target_grid_size')}')
+                # print(f'{symbol} next_price {next_price}')
 
-                else:  # Если нет последнего ордера, то покупаем сразу
+                if price < next_price:
                     await place_buy_order(symbol, price, session, http_session)
+
+            else:  # Если нет последнего ордера, то покупаем сразу
+                await place_buy_order(symbol, price, session, http_session)
 
             await sleep(1)
 

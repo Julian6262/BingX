@@ -28,7 +28,7 @@ async def _get_initial_close_prices(symbol: str, http_session: ClientSession, in
     return delta, next_candle_time, deque(close_price, maxlen=limit)
 
 
-async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name: str):
+async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name: str, main_lot_map: dict = None):
     close_prices = np_array(close_prices, dtype=float)
 
     match logic_name:
@@ -45,17 +45,8 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
             grid_size = await config_manager.get_data(symbol, 'grid_size')
             usdt_balance = await account_manager.get_balance('USDT')
 
-            main_lot_map = {
-                (0, 400): 10,
-                (400, 900): 20,
-                (900, 1400): 30,
-                (1400, 2000): 40,
-                (2000, 2600): 50,
-                (2600, 3300): 60,
-            }
-
             for (min_balance, max_balance), lot in main_lot_map.items():
-                if min_balance <= usdt_balance < max_balance:
+                if min_balance < usdt_balance <= max_balance:
                     main_lot = lot
                     break
 
@@ -75,8 +66,8 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
             for (rsi_min, rsi_max), (target_lot, target_grid_size) in rsi_lot_and_grid_map.items():
                 if rsi_min <= rsi < rsi_max and (main_lot != target_lot or grid_size != target_grid_size):
                     await config_manager.set_data(symbol, 'lot', target_lot)
-                    await config_manager.set_data(symbol, 'main_lot', main_lot)
-                    await config_manager.set_data(symbol, 'grid_size', target_grid_size)
+                    await config_manager.set_data(symbol, 'main_lot', main_lot)  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                    await config_manager.set_data(symbol, 'target_grid_size', target_grid_size)
                     await config_manager.set_data(symbol, 'init_rsi', True)  # сначала индикатор, потом запуск торгов
                     break  # Выходим из цикла после обновления лота
 
@@ -85,6 +76,15 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
 async def start_indicators(symbol: str, http_session: ClientSession):
     while not await ws_price.get_price(symbol):
         await sleep(0.3)  # Задержка перед попыткой получения цены
+
+    main_lot_map = {
+        (0, 400): 10,
+        (400, 900): 20,
+        (900, 1400): 30,
+        (1400, 2000): 40,
+        (2000, 2600): 50,
+        (2600, 3300): 60,
+    }
 
     initial_1m_data = await _get_initial_close_prices(symbol, http_session, '1m')
     initial_4h_data = await _get_initial_close_prices(symbol, http_session, '4h')
@@ -113,6 +113,6 @@ async def start_indicators(symbol: str, http_session: ClientSession):
 
         # !!!!!!!!!! запускается много раз, изменить логику !!!!!!!!!!!!!!!
         if await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
-            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h')
+            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', main_lot_map)
 
         await sleep(1)
