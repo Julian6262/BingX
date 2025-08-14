@@ -141,13 +141,11 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     }
 
     report = f"""\n
-              RSI_lot: {await config_manager.get_data(symbol, 'lot')}
               main_lot: {await config_manager.get_data(symbol, 'main_lot')}
               balance: {await account_manager.get_balance('USDT')}
               cummulativeQuoteQty: {order_data['cummulativeQuoteQty']}
-              grid_size: {(await config_manager.get_data(symbol, 'grid_size')) * 100}
               execute_qty: {order_data['executedQty']}
-              Ордер открыт {symbol}\n{str(data)}\n
+              Ордер открыт {symbol}  {str(data)}\n
 """
 
     order_id = await add_order(session, symbol, data_for_db)  # Добавить ордер в базу
@@ -180,45 +178,15 @@ async def place_sell_order(symbol: str, summary_executed: float, total_cost_with
     await session.commit()
 
     report = (f'\n\nРасчет моей программы:\n'
-              f'price: {price}\n'
               f'orders_id: {orders_id}\n'
               f'summary_executed: {summary_executed}\n'
               f'Сумма в бирже price * summary_executed: {price * summary_executed}\n'
               f'Сумма с комиссией total_cost_with_fee: {total_cost_with_fee}\n'
-              f'Доход: {price * summary_executed - total_cost_with_fee}\n'
               f'Доход cummulativeQuoteQty: {real_profit}\n'
               f'\nОрдера закрыты {symbol}\n{str(order_data_ok)}\n')
 
     logger.info(report)
     return report
-
-
-# async def transaction_upd_ws(http_session: ClientSession):
-#     while not (listen_key := await account_manager.get_listen_key()):
-#         await sleep(0.3)  # Задержка перед попыткой получения ключа
-#
-#     channel = {"id": "1", "reqType": "sub", "dataType": "spot.executionReport"}
-#     url = f"{config.URL_WS}?listenKey={listen_key}"
-#
-#     while True:  # Цикл для повторного подключения
-#         try:
-#             async with http_session.ws_connect(url) as ws:
-#                 logger.info(f"WebSocket connected transaction_upd_ws")
-#                 await ws.send_json(channel)
-#
-#                 async for message in ws:
-#                     try:
-#                         if 'data' in (data := loads(decompress(message.data).decode())):
-#                             logger.info(f"transaction_upd_ws: {data}")
-#
-#                     except Exception as e:
-#                         logger.error(f"Непредвиденная ошибка transaction_upd_ws: {e}, сообщение: {message.data}")
-#
-#         except Exception as e:
-#             logger.error(f"Критическая ошибка transaction_upd_ws: {e}")
-#
-#         logger.error(f"transaction_upd_ws завершился. Переподключение через 5 секунд.")
-#         await sleep(5)
 
 
 async def account_upd_ws(http_session: ClientSession):
@@ -284,7 +252,7 @@ async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
-    partly_target_profit = 0.005  # 0.5%
+    partly_target_profit = 0.006  # 0.6%
 
     async def trading_logic():
         while not await config_manager.get_data(symbol, 'init_rsi'):
@@ -317,14 +285,6 @@ async def start_trading(symbol, **kwargs):
                     if partly_summary_executed:
                         step_size = await so_manager.get_step_size(symbol)
                         partly_summary_executed = round(partly_summary_executed, get_decimal_places(step_size))
-
-                        print(f'\n----------Частичная продажа-------------')
-                        print(f'price {price}')
-                        print(f'partly_summary_executed {partly_summary_executed}')
-                        print(f'partly_cost_with_fee {partly_cost_with_fee}')
-                        print(f'Доход {partly_summary_executed * price - partly_cost_with_fee}')
-                        print(f'orders_id {orders_id}')
-                        print(f'-----------------------\n')
 
                         await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,
                                                http_session, orders_id=orders_id)
