@@ -141,6 +141,7 @@ async def place_buy_order(symbol: str, price: float, session: AsyncSession, http
     }
 
     report = f"""\n
+              RSI_lot: {await config_manager.get_data(symbol, 'lot')}
               main_lot: {await config_manager.get_data(symbol, 'main_lot')}
               balance: {await account_manager.get_balance('USDT')}
               cummulativeQuoteQty: {order_data['cummulativeQuoteQty']}

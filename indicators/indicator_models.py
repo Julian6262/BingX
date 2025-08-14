@@ -7,6 +7,7 @@ from numpy import array as np_array
 
 from bingx_api.bingx_command import get_candlestick_data, ws_price, so_manager, task_manager, config_manager, \
     account_manager
+from common.config import config
 from common.func import add_task
 
 logger = getLogger('my_app')
@@ -35,9 +36,9 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
         case 'macd_1m':
             _, _, hist = MACD(close_prices, fastperiod=12, slowperiod=26, signalperiod=9)
 
-            if hist[-2] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
+            if hist[-2] > 0 and hist[-1] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'buy')
-            elif hist[-2] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
+            elif hist[-2] < 0 and hist[-1] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'sell')
 
         case 'rsi_4h':
@@ -77,15 +78,6 @@ async def start_indicators(symbol: str, http_session: ClientSession):
     while not await ws_price.get_price(symbol):
         await sleep(0.3)  # Задержка перед попыткой получения цены
 
-    main_lot_map = {
-        (0, 400): 10,
-        (400, 900): 20,
-        (900, 1400): 30,
-        (1400, 2000): 40,
-        (2000, 2600): 50,
-        (2600, 3300): 60,
-    }
-
     initial_1m_data = await _get_initial_close_prices(symbol, http_session, '1m')
     initial_4h_data = await _get_initial_close_prices(symbol, http_session, '4h')
 
@@ -113,6 +105,6 @@ async def start_indicators(symbol: str, http_session: ClientSession):
 
         # !!!!!!!!!! запускается много раз, изменить логику !!!!!!!!!!!!!!!
         if await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
-            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', main_lot_map)
+            await _process_indicators_logic(symbol, close_prices_deque_4h, 'rsi_4h', config.MAIN_LOT_MAP)
 
         await sleep(1)
