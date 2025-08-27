@@ -38,8 +38,11 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
 
             if hist[-2] > 0 and hist[-1] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'buy')
+                # logger.info(f'Была установлена триггер {symbol} на buy. ')
+
             elif hist[-2] < 0 and hist[-1] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'sell')
+                # logger.info(f'Была установлена триггер {symbol} на sell. ')
 
         case 'rsi_4h':
             rsi = RSI(close_prices, timeperiod=14)[-1]

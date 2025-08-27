@@ -61,20 +61,20 @@ async def get_profit_cmd(message: Message):
         return await message.answer('Нет открытых ордеров')
 
     total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
-    total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
+    # total_cost_with_fee_tp = total_cost_with_fee * (1 + config.TARGET_PROFIT)
     current_profit = price * summary_executed - total_cost_with_fee
-    profit_to_target = price * summary_executed - total_cost_with_fee_tp
+    # profit_to_target = price * summary_executed - total_cost_with_fee_tp
 
     await message.answer(
         f'\nprice: {price}\n'
         f'summary_executed: {summary_executed}\n'
         f'\nprice * summary_executed: {price * summary_executed}\n'
         f'сумма с комиссией биржи (total_cost_with_fee): {total_cost_with_fee}\n'
-        f'сумма с комиссией биржи + 1% (total_cost_with_fee_tp): {total_cost_with_fee_tp}\n'
+        # f'сумма с комиссией биржи + 1% (total_cost_with_fee_tp): {total_cost_with_fee_tp}\n'
         f'\nДоход с учетом комиссии биржи: {current_profit}\n'
-        f'Доход с учетом комиссии биржи до достижения 1%: {profit_to_target}\n'
+        # f'Доход с учетом комиссии биржи до достижения 1%: {profit_to_target}\n'
         f'безубыток с комиссией биржи (be_level_with_fee): {total_cost_with_fee / summary_executed}\n'
-        f'безубыток с комиссией биржи + 1% (be_level_with_fee_tp): {total_cost_with_fee_tp / summary_executed}\n'
+        # f'безубыток с комиссией биржи + 1% (be_level_with_fee_tp): {total_cost_with_fee_tp / summary_executed}\n'
         # f'До достижения безубыток с комиссией биржи: {be_level_with_fee - price}\n'
         # f'До достижения  безубыток с комиссией биржи + 1%: {be_level_with_fee_tp - price}\n'
     )
