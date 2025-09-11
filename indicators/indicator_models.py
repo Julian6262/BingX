@@ -38,11 +38,9 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
 
             if hist[-2] > 0 and hist[-1] > 0 and await so_manager.get_b_s_trigger(symbol) in ('sell', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'buy')
-                # logger.info(f'Была установлена триггер {symbol} на buy. ')
 
             elif hist[-2] < 0 and hist[-1] < 0 and await so_manager.get_b_s_trigger(symbol) in ('buy', 'new'):
                 await so_manager.set_b_s_trigger(symbol, 'sell')
-                # logger.info(f'Была установлена триггер {symbol} на sell. ')
 
         case 'rsi_4h':
             rsi = RSI(close_prices, timeperiod=14)[-1]
@@ -60,8 +58,10 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
                 (25, 30): (main_lot * 2, grid_size * 2.9),
                 (30, 35): (main_lot * 1.75, grid_size * 2.45),
                 (35, 40): (main_lot * 1.5, grid_size * 1.95),
-                (40, 50): (main_lot, grid_size * 1.55),
-                (50, 60): (main_lot * 0.75, grid_size * 1.3),
+                (40, 45): (main_lot * 1.25, grid_size * 1.65),
+                (45, 50): (main_lot, grid_size * 1.55),
+                (50, 55): (main_lot * 0.75, grid_size * 1.3),
+                (55, 60): (main_lot * 0.55, grid_size * 1.25),
                 (60, 65): (main_lot * 0.35, grid_size * 1.2),
                 (65, 70): (main_lot * 0.2, grid_size * 1.1),
                 (70, float('inf')): (main_lot * 0.15, grid_size)
