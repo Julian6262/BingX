@@ -259,7 +259,7 @@ async def start_trading(symbol, **kwargs):
         while not await config_manager.get_data(symbol, 'init_rsi'):
             await sleep(0.3)  # Задержка перед попыткой данных rsi
 
-        logger.info(f'Запуск торговли {symbol}')
+        logger.info(f'Запуск торговли Full {symbol}')
 
         while True:
             _, price = await ws_price.get_price(symbol)

@@ -53,17 +53,17 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
                     break
 
             rsi_lot_and_grid_map = {
-                (-float('inf'), 20): (main_lot * 3, grid_size * 3.8),
-                (20, 25): (main_lot * 2.5, grid_size * 3.35),
-                (25, 30): (main_lot * 2, grid_size * 2.9),
-                (30, 35): (main_lot * 1.75, grid_size * 2.45),
-                (35, 40): (main_lot * 1.5, grid_size * 1.95),
-                (40, 45): (main_lot * 1.25, grid_size * 1.65),
-                (45, 50): (main_lot, grid_size * 1.55),
-                (50, 55): (main_lot * 0.75, grid_size * 1.3),
-                (55, 60): (main_lot * 0.55, grid_size * 1.25),
-                (60, 65): (main_lot * 0.35, grid_size * 1.2),
-                (65, 70): (main_lot * 0.2, grid_size * 1.1),
+                (-float('inf'), 20): (main_lot * 6, grid_size * 1),
+                (20, 25): (main_lot * 5, grid_size * 1),
+                (25, 30): (main_lot * 4, grid_size * 1),
+                (30, 35): (main_lot * 3, grid_size * 1),
+                (35, 40): (main_lot * 2.5, grid_size * 1),
+                (40, 45): (main_lot * 2, grid_size * 1),
+                (45, 50): (main_lot * 1.5, grid_size * 1),
+                (50, 55): (main_lot * 1, grid_size * 1),
+                (55, 60): (main_lot * 0.75, grid_size * 1),
+                (60, 65): (main_lot * 0.45, grid_size * 1),
+                (65, 70): (main_lot * 0.2, grid_size * 1),
                 (70, float('inf')): (main_lot * 0.15, grid_size)
             }
 
@@ -90,7 +90,7 @@ async def start_indicators(symbol: str, http_session: ClientSession):
     delta_1m, next_candle_time_1m, close_prices_deque_1m = initial_1m_data
     delta_4h, next_candle_time_4h, close_prices_deque_4h = initial_4h_data
 
-    logger.info(f'Запуск start_indicators {symbol}')
+    # logger.info(f'Запуск start_indicators {symbol}')
 
     while True:
         time_now, price = await ws_price.get_price(symbol)
