@@ -33,7 +33,7 @@ class Config:
         # }
 
         self.MAIN_LOT_MAP = {
-            (0, 5000): 14,
+            (0, 5000): 21.1,
 
         }
 
