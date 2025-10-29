@@ -253,7 +253,8 @@ async def start_trading(symbol, **kwargs):
     session = kwargs.get('session')
     http_session = kwargs.get('http_session')
     async_session = kwargs.get('async_session')
-    partly_target_profit = 0.006  # 0.6%
+    target_profit = config.TARGET_PROFIT
+    # partly_target_profit = 0.006  # 0.6%
 
     async def trading_logic():
         while not await config_manager.get_data(symbol, 'init_rsi'):
@@ -264,35 +265,18 @@ async def start_trading(symbol, **kwargs):
         while True:
             _, price = await ws_price.get_price(symbol)
 
-            # Создаем ордер на продажу частично, сумма ордеров > partly_target_profit
-            if last_order := await so_manager.get_last_order(symbol):
-                if await so_manager.get_b_s_trigger(symbol) == 'sell' and price > last_order['price']:
-                    partly_profit = 0.0
-                    partly_cost_with_fee = 0.0
-                    partly_summary_executed = 0.0
-                    orders_id = []
+            if summary_executed := await so_manager.get_summary(symbol, 'executed_qty'):
+                total_cost_with_fee = await so_manager.get_summary(symbol, 'cost_with_fee')
+                total_cost_with_fee_tp = total_cost_with_fee * (1 + target_profit)
+                profit_to_target = price * summary_executed - total_cost_with_fee_tp
 
-                    for order in reversed(await so_manager.get_orders(symbol)):
-                        partly_profit += order['executed_qty'] * price
-                        partly_cost_with_fee += order['cost_with_fee']
-
-                        if partly_profit >= partly_cost_with_fee * (1 + partly_target_profit):
-                            partly_summary_executed += order['executed_qty']
-                            orders_id.append(order['id'])
-                        else:
-                            partly_profit -= order['executed_qty'] * price
-                            partly_cost_with_fee -= order['cost_with_fee']
-
-                    if partly_summary_executed:
-                        step_size = await so_manager.get_step_size(symbol)
-                        partly_summary_executed = round(partly_summary_executed, get_decimal_places(step_size))
-
-                        await place_sell_order(symbol, partly_summary_executed, partly_cost_with_fee, session,
-                                               http_session, orders_id=orders_id)
+                # Создаем ордер на продажу по всем ордерам, если доход > 1%
+                if profit_to_target > 0:
+                    await place_sell_order(symbol, summary_executed, total_cost_with_fee, session, http_session)
 
             # Ордер на покупку, если цена ниже (1%) от цены последнего ордера (если ордеров нет, то открываем новый)
             if await so_manager.get_state(symbol) == 'track' and await so_manager.get_b_s_trigger(symbol) == 'buy':
-                if last_order:
+                if last_order := await so_manager.get_last_order(symbol):
                     next_price = last_order['price'] * (1 - await config_manager.get_data(symbol, 'target_grid_size'))
 
                     if price < next_price:

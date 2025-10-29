@@ -53,18 +53,18 @@ async def _process_indicators_logic(symbol: str, close_prices: deque, logic_name
                     break
 
             rsi_lot_and_grid_map = {
-                (-float('inf'), 20): (main_lot * 4.5, grid_size * 2),
-                (20, 25): (main_lot * 3.5, grid_size * 1.75),
-                (25, 30): (main_lot * 3, grid_size * 1.5),
-                (30, 35): (main_lot * 2.5, grid_size * 1.25),
-                (35, 40): (main_lot * 2.25, grid_size * 1.15),
-                (40, 45): (main_lot * 2, grid_size * 1),
-                (45, 50): (main_lot * 1.5, grid_size * 1),
+                (-float('inf'), 20): (main_lot * 4.5, grid_size * 1),
+                (20, 25): (main_lot * 3.5, grid_size * 1),
+                (25, 30): (main_lot * 3, grid_size * 1),
+                (30, 35): (main_lot * 2, grid_size * 1),
+                (35, 40): (main_lot * 1.5, grid_size * 1),
+                (40, 45): (main_lot * 1, grid_size * 1),
+                (45, 50): (main_lot * 1, grid_size * 1),
                 (50, 55): (main_lot * 1, grid_size * 1),
-                (55, 60): (main_lot * 0.75, grid_size * 1),
-                (60, 65): (main_lot * 0.45, grid_size * 1),
-                (65, 70): (main_lot * 0.2, grid_size * 1),
-                (70, float('inf')): (main_lot * 0.15, grid_size)
+                (55, 60): (main_lot * 1, grid_size * 1),
+                (60, 65): (main_lot * 0.1, grid_size * 1),
+                (65, 70): (main_lot * 0.1, grid_size * 1),
+                (70, float('inf')): (main_lot * 0.05, grid_size)
             }
 
             for (rsi_min, rsi_max), (target_lot, target_grid_size) in rsi_lot_and_grid_map.items():

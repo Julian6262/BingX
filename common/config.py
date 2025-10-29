@@ -15,6 +15,7 @@ class Config:
         self.ADMIN: str = getenv('ADMIN')
         self.HEADERS: dict = {'X-BX-APIKEY': self.API_KEY}
 
+        self.TARGET_PROFIT: float = 0.01  # в долях (1%)
         self.TAKER: float = 0.002  # в долях (0.2%)
         self.MAKER: float = 0.002  # в долях (0.2%)
 
@@ -33,7 +34,7 @@ class Config:
         # }
 
         self.MAIN_LOT_MAP = {
-            (0, 5000): 21.1,
+            (0, 5000): 14,
 
         }
 
